@@ -10,7 +10,8 @@ import {
   Calendar,
   Globe,
   X,
-  AlertTriangle
+  AlertTriangle,
+  KeyRound
 } from 'lucide-react';
 
 interface Tenant {
@@ -18,14 +19,14 @@ interface Tenant {
   subdomain: string;
   created_at: string;
   status: 'active' | 'suspended';
-  admin_id: number;
+  admin_id: number | null;
   admin_name: string;
   admin_email: string;
 }
 
 interface ModalConfig {
   isOpen: boolean;
-  type: 'impersonate' | 'suspend' | 'activate' | null;
+  type: 'impersonate' | 'suspend' | 'activate' | 'reset_password' | null;
   tenant: Tenant | null;
 }
 
@@ -35,6 +36,9 @@ export function TenantManagement() {
   const [searchTerm, setSearchTerm] = useState('');
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [modal, setModal] = useState<ModalConfig>({ isOpen: false, type: null, tenant: null });
+  const [passwords, setPasswords] = useState({ newPassword: '', confirmPassword: '' });
+  const [resetError, setResetError] = useState('');
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     fetchTenants();
@@ -43,13 +47,13 @@ export function TenantManagement() {
   // Close modal on Escape key
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && modal.isOpen) {
-        setModal({ isOpen: false, type: null, tenant: null });
+      if (e.key === 'Escape' && modal.isOpen && actionLoading === null) {
+        closeModal();
       }
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, [modal.isOpen]);
+  }, [modal.isOpen, actionLoading]);
 
   const fetchTenants = async () => {
     try {
@@ -74,8 +78,17 @@ export function TenantManagement() {
     setModal({ isOpen: true, type: 'impersonate', tenant });
   };
 
+  const openResetPasswordModal = (tenant: Tenant) => {
+    setPasswords({ newPassword: '', confirmPassword: '' });
+    setResetError('');
+    setNotice('');
+    setModal({ isOpen: true, type: 'reset_password', tenant });
+  };
+
   const closeModal = () => {
     setModal({ isOpen: false, type: null, tenant: null });
+    setPasswords({ newPassword: '', confirmPassword: '' });
+    setResetError('');
   };
 
   const handleConfirmAction = async () => {
@@ -83,10 +96,39 @@ export function TenantManagement() {
 
     if (modal.type === 'impersonate') {
       await executeImpersonate(modal.tenant.tenant_id, modal.tenant.subdomain);
+    } else if (modal.type === 'reset_password') {
+      await executeResetPassword(modal.tenant);
+      return;
     } else {
       await executeToggleStatus(modal.tenant.tenant_id, modal.tenant.status);
     }
     closeModal();
+  };
+
+  const executeResetPassword = async (tenant: Tenant) => {
+    if (!tenant.admin_id) return;
+    if (passwords.newPassword.length < 12 || passwords.newPassword.length > 128 || !passwords.newPassword.trim()) {
+      setResetError('Password baru harus berisi 12–128 karakter.');
+      return;
+    }
+    if (passwords.newPassword !== passwords.confirmPassword) {
+      setResetError('Konfirmasi password tidak cocok.');
+      return;
+    }
+    setResetError('');
+    setActionLoading(tenant.tenant_id);
+    try {
+      const token = localStorage.getItem('token');
+      await axios.put(`${import.meta.env.VITE_API_URL}/api/v1/superadmin/tenants/${tenant.tenant_id}/admins/${tenant.admin_id}/password`, passwords, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setNotice(`Password admin ${tenant.admin_email} berhasil direset.`);
+      closeModal();
+    } catch (err: any) {
+      setResetError(err.response?.data?.error || 'Gagal mereset password. Silakan coba lagi.');
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const executeToggleStatus = async (tenantId: number, currentStatus: string) => {
@@ -158,6 +200,7 @@ export function TenantManagement() {
         <div>
            <h2 className="text-3xl font-black text-white tracking-tight">Manajemen Tenant</h2>
            <p className="text-zinc-400 text-sm font-medium mt-1">Kelola status operasional dan sesi semua startup yang terdaftar.</p>
+           {notice && <p role="status" className="text-emerald-400 text-sm mt-2">{notice}</p>}
         </div>
         
         <div className="relative group w-full md:w-80">
@@ -244,6 +287,15 @@ export function TenantManagement() {
                               <UserCheck className="w-4 h-4" />
                               <span className="hidden lg:inline">Impersonate</span>
                             </button>
+                          <button
+                            onClick={() => openResetPasswordModal(tenant)}
+                            disabled={!tenant.admin_id || actionLoading === tenant.tenant_id}
+                            className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-amber-500 text-zinc-300 hover:text-black rounded-xl transition-all text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                            title={tenant.admin_id ? 'Reset password darurat admin tenant' : 'Tenant belum memiliki admin'}
+                          >
+                            <KeyRound className="w-4 h-4" />
+                            <span className="hidden lg:inline">Reset Password</span>
+                          </button>
                          
                          <button
                            onClick={() => openSuspendModal(tenant)}
@@ -281,7 +333,7 @@ export function TenantManagement() {
       {/* Custom Confirmation Modal */}
       {modal.isOpen && modal.tenant && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={closeModal} />
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => actionLoading === null && closeModal()} />
           <div className="relative bg-[#09090b] border border-zinc-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
             
             {/* Modal Header */}
@@ -289,14 +341,14 @@ export function TenantManagement() {
               <div className={`p-3 rounded-xl flex-shrink-0 ${
                 modal.type === 'impersonate' 
                   ? 'bg-cyan-500/10' 
-                  : modal.type === 'suspend' 
-                    ? 'bg-red-500/10' 
-                    : 'bg-amber-500/10'
+                  : modal.type === 'suspend' ? 'bg-red-500/10' : 'bg-amber-500/10'
               }`}>
                 {modal.type === 'impersonate' ? (
                   <UserCheck className="w-6 h-6 text-cyan-400" />
                 ) : modal.type === 'suspend' ? (
                   <AlertTriangle className="w-6 h-6 text-red-400" />
+                ) : modal.type === 'reset_password' ? (
+                  <KeyRound className="w-6 h-6 text-amber-400" />
                 ) : (
                   <Power className="w-6 h-6 text-amber-400" />
                 )}
@@ -306,6 +358,7 @@ export function TenantManagement() {
                   {modal.type === 'impersonate' && 'Impersonate Tenant'}
                   {modal.type === 'suspend' && 'Suspend Tenant'}
                   {modal.type === 'activate' && 'Aktivasi Tenant'}
+                  {modal.type === 'reset_password' && 'Reset Password Darurat'}
                 </h3>
                 <p className="text-sm text-zinc-400 leading-relaxed">
                   {modal.type === 'impersonate' && (
@@ -317,10 +370,14 @@ export function TenantManagement() {
                   {modal.type === 'activate' && (
                     <>Aktifkan kembali <span className="font-bold text-amber-400">{modal.tenant.subdomain}</span>? Akses admin mereka akan dipulihkan.</>
                   )}
+                  {modal.type === 'reset_password' && (
+                    <>Password akun admin akan langsung diganti. Jika akun ini memiliki akses ke tenant lain, password barunya berlaku di sana juga.</>
+                  )}
                 </p>
               </div>
               <button 
                 onClick={closeModal}
+                disabled={actionLoading !== null}
                 className="p-1.5 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors flex-shrink-0"
               >
                 <X className="w-4 h-4" />
@@ -340,16 +397,40 @@ export function TenantManagement() {
               </div>
             </div>
 
+            {modal.type === 'reset_password' && (
+              <div className="px-8 pb-6 space-y-4">
+                <label className="block text-sm font-bold text-zinc-300">
+                  Password baru
+                  <input type="password" autoComplete="new-password" minLength={12} maxLength={128}
+                    value={passwords.newPassword}
+                    onChange={e => setPasswords(prev => ({ ...prev, newPassword: e.target.value }))}
+                    className="mt-2 w-full px-4 py-3 bg-zinc-900 border border-zinc-700 text-white rounded-xl focus:outline-none focus:border-amber-500"
+                    placeholder="Minimal 12 karakter" />
+                </label>
+                <label className="block text-sm font-bold text-zinc-300">
+                  Konfirmasi password baru
+                  <input type="password" autoComplete="new-password" minLength={12} maxLength={128}
+                    value={passwords.confirmPassword}
+                    onChange={e => setPasswords(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                    className="mt-2 w-full px-4 py-3 bg-zinc-900 border border-zinc-700 text-white rounded-xl focus:outline-none focus:border-amber-500"
+                    placeholder="Ketik ulang password baru" />
+                </label>
+                {resetError && <p role="alert" className="text-sm text-red-400">{resetError}</p>}
+              </div>
+            )}
+
             {/* Modal Actions */}
             <div className="px-8 py-5 border-t border-zinc-800 flex items-center justify-end gap-3 bg-zinc-900/30">
               <button 
                 onClick={closeModal}
+                disabled={actionLoading !== null}
                 className="px-5 py-2.5 text-zinc-400 hover:text-white font-bold text-sm transition-colors rounded-xl hover:bg-zinc-800"
               >
                 Batal
               </button>
               <button 
                 onClick={handleConfirmAction}
+                disabled={actionLoading !== null}
                 className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm transition-all active:scale-95 ${
                   modal.type === 'impersonate' 
                     ? 'bg-cyan-500 hover:bg-cyan-400 text-black shadow-lg shadow-cyan-500/20' 
@@ -366,6 +447,9 @@ export function TenantManagement() {
                 )}
                 {modal.type === 'activate' && (
                   <><Power className="w-4 h-4" /> Aktivasi</>
+                )}
+                {modal.type === 'reset_password' && (
+                  actionLoading === modal.tenant.tenant_id ? <><Loader2 className="w-4 h-4 animate-spin" /> Mereset...</> : <><KeyRound className="w-4 h-4" /> Reset Password</>
                 )}
               </button>
             </div>

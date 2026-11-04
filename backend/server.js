@@ -444,7 +444,7 @@ app.get('/api/v1/superadmin/tenants', authenticateToken, verifySuperAdmin, async
             SELECT t.id as tenant_id, t.subdomain, t.created_at, IFNULL(t.status, 'active') as status,
                    u.id as admin_id, u.name as admin_name, u.email as admin_email
             FROM tenants t
-            LEFT JOIN tenant_users tu ON t.id = tu.tenant_id AND tu.role = 'admin'
+            LEFT JOIN tenant_users tu ON t.id = tu.tenant_id AND tu.role = 'admin' AND tu.status = 'active'
             LEFT JOIN users u ON tu.user_id = u.id
             ORDER BY t.created_at DESC
         `;
@@ -453,6 +453,44 @@ app.get('/api/v1/superadmin/tenants', authenticateToken, verifySuperAdmin, async
     } catch (error) {
         console.error('[SUPER ADMIN] Fetch tenants error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+// Emergency reset for the admin shown on a tenant's management row.
+app.put('/api/v1/superadmin/tenants/:tenantId/admins/:adminId/password', authenticateToken, verifySuperAdmin, async (req, res) => {
+    const tenantId = Number(req.params.tenantId);
+    const adminId = Number(req.params.adminId);
+    const { newPassword, confirmPassword } = req.body || {};
+    if (!Number.isSafeInteger(tenantId) || tenantId < 1 || !Number.isSafeInteger(adminId) || adminId < 1) {
+        return res.status(400).json({ error: 'ID tenant atau admin tidak valid.' });
+    }
+    if (adminId === req.user.userId) {
+        return res.status(400).json({ error: 'Gunakan profil untuk mengubah password akun Anda sendiri.' });
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128 || !newPassword.trim()) {
+        return res.status(400).json({ error: 'Password baru harus berisi 12–128 karakter.' });
+    }
+    if (newPassword !== confirmPassword) {
+        return res.status(400).json({ error: 'Konfirmasi password tidak cocok.' });
+    }
+
+    try {
+        const [admins] = await db.execute(
+            `SELECT u.id, u.email FROM tenants t
+             JOIN tenant_users tu ON tu.tenant_id = t.id AND tu.role = 'admin' AND tu.status = 'active'
+             JOIN users u ON u.id = tu.user_id
+             WHERE t.id = ? AND u.id = ? LIMIT 1`,
+            [tenantId, adminId]
+        );
+        if (admins.length === 0) return res.status(404).json({ error: 'Admin aktif tidak ditemukan pada tenant ini.' });
+
+        const passwordHash = await bcrypt.hash(newPassword, 10);
+        await db.execute('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, adminId]);
+        logActivity(tenantId, req.user.userId, req.user.name || req.user.email, 'super_admin', `Emergency password reset for admin ${adminId}`, 'success');
+        res.json({ message: 'Password admin tenant berhasil direset.' });
+    } catch (error) {
+        console.error('[SUPER ADMIN] Emergency password reset error:', error);
+        res.status(500).json({ error: 'Gagal mereset password admin tenant.' });
     }
 });
 
