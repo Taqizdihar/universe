@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import universeLogo from '../assets/logo/UNI-VERSE Logo V3.png';
 import uniInsideLogo from '../assets/logo/Uni-Inside Logo.png';
+import Galaxy from '../components/Galaxy';
 
 export function PublicLanding() {
   const navigate = useNavigate();
@@ -127,23 +128,27 @@ export function PublicLanding() {
         .cursor-pencil {
           cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='white' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z'/%3E%3Cpath d='m15 5 4 4'/%3E%3C/svg%3E") 2 22, auto;
         }
-        @keyframes drift {
-          0% { transform: translate(-50%, -50%) scale(1); }
-          50% { transform: translate(-30%, -70%) scale(1.1); }
-          100% { transform: translate(-70%, -30%) scale(0.9); }
-        }
       `}</style>
-      
-      <canvas id="particle-canvas" className="absolute inset-0 pointer-events-none z-0" />
 
-      {/* Background Glows */}
-      <div 
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-[#FAD02C] opacity-10 blur-[150px] rounded-full pointer-events-none" 
-        style={{ animation: 'drift 20s infinite alternate ease-in-out' }}
-      />
+      <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden="true">
+        <Galaxy
+          starColors={['#FFFFFF', '#F7D15B', '#98A5FF', '#E6E6F2']}
+          density={1}
+          glowIntensity={0.3}
+          flareIntensity={0.8}
+          starSpeed={0.5}
+          mouseRepulsion
+          clickWarp
+          transparent={false}
+          backgroundColor="#0B0B0B"
+          dpr={1.5}
+        />
+      </div>
+
+      <canvas id="particle-canvas" className="absolute inset-0 pointer-events-none z-0" />
       
       {/* Navigation */}
-      <header className="flex items-center justify-between px-10 py-6 sticky top-0 z-50 bg-[#0B0B0B]">
+      <header className="flex items-center justify-between px-10 py-6 sticky top-0 z-50 bg-[#0B0B0B]/70 backdrop-blur-sm">
         <div className="flex items-center">
            <a 
             href="https://uni-inside.pages.dev/" 
