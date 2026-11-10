@@ -31,7 +31,10 @@ const apiAuth = async (req, res, next) => {
     }
 
     try {
-        const [keys] = await db.execute('SELECT tenant_id FROM api_keys WHERE api_key = ? LIMIT 1', [apiKey]);
+        const [keys] = await db.execute(
+            "SELECT ak.tenant_id FROM api_keys ak JOIN tenants t ON t.id = ak.tenant_id AND t.status = 'active' WHERE ak.api_key = ? LIMIT 1",
+            [apiKey]
+        );
         
         if (keys.length === 0) {
             return res.status(401).json({ error: 'Invalid API Key' });
@@ -40,7 +43,7 @@ const apiAuth = async (req, res, next) => {
         req.api_tenant_id = keys[0].tenant_id;
         next();
     } catch (error) {
-        console.error('[API AUTH ERROR]:', error);
+        console.error('[API AUTH ERROR]:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 };
@@ -54,7 +57,7 @@ const apiAuth = async (req, res, next) => {
 
 router.get('/api-key', async (req, res) => {
     try {
-        const tid = req.headers['x-active-tenant'] ? parseInt(req.headers['x-active-tenant'], 10) : req.user.tenant_id;
+        const tid = req.tenantContext.tenantId;
         const [keys] = await db.execute('SELECT api_key FROM api_keys WHERE tenant_id = ? LIMIT 1', [tid]);
         
         if (keys.length === 0) {
@@ -62,7 +65,7 @@ router.get('/api-key', async (req, res) => {
         }
         res.json({ api_key: keys[0].api_key });
     } catch (error) {
-        console.error('[API ERROR] Get API Key:', error);
+        console.error('[API ERROR] Get API Key:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -76,7 +79,7 @@ router.get('/api-key', async (req, res) => {
 
 router.post('/api-key/regenerate', async (req, res) => {
     try {
-        const tid = req.headers['x-active-tenant'] ? parseInt(req.headers['x-active-tenant'], 10) : req.user.tenant_id;
+        const tid = req.tenantContext.tenantId;
         const newKey = 'uni_' + crypto.randomBytes(24).toString('hex');
         
         const [keys] = await db.execute('SELECT id FROM api_keys WHERE tenant_id = ?', [tid]);
@@ -88,7 +91,7 @@ router.post('/api-key/regenerate', async (req, res) => {
         
         res.json({ api_key: newKey });
     } catch (error) {
-        console.error('[API ERROR] Regenerate API Key:', error);
+        console.error('[API ERROR] Regenerate API Key:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });

@@ -98,7 +98,7 @@ router.get('/posts', async (req, res) => {
         const [posts] = await db.execute(
             `SELECT posts.*, post_categories.name AS category_name, post_categories.slug AS category_slug
              FROM posts
-             LEFT JOIN post_categories ON posts.category_id = post_categories.id
+             LEFT JOIN post_categories ON posts.category_id = post_categories.id AND post_categories.tenant_id = posts.tenant_id
              WHERE posts.tenant_id = ? AND posts.status = 'published'
              ORDER BY posts.created_at DESC`, 
             [tenantId]
@@ -118,7 +118,7 @@ router.get('/posts', async (req, res) => {
 
         res.json(normalizedPosts);
     } catch (error) {
-        console.error('[PUBLIC API ERROR] Get posts:', error);
+        console.error('[PUBLIC API ERROR] Get posts:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -134,7 +134,7 @@ router.get('/posts/:slug', async (req, res) => {
         const [rows] = await db.execute(
             `SELECT posts.*, post_categories.name AS category_name, post_categories.slug AS category_slug
              FROM posts
-             LEFT JOIN post_categories ON posts.category_id = post_categories.id
+             LEFT JOIN post_categories ON posts.category_id = post_categories.id AND post_categories.tenant_id = posts.tenant_id
              WHERE posts.tenant_id = ? AND posts.slug = ? AND posts.status = 'published'
              LIMIT 1`,
             [tenantId, slug]
@@ -156,7 +156,7 @@ router.get('/posts/:slug', async (req, res) => {
 
         res.json(normalizePostText(post));
     } catch (error) {
-        console.error('[PUBLIC API ERROR] Get single post:', error);
+        console.error('[PUBLIC API ERROR] Get single post:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -193,7 +193,7 @@ router.post('/posts/:post_id/comments', async (req, res) => {
 
         // Verify the post exists and belongs to this tenant
         const [posts] = await db.execute(
-            'SELECT id FROM posts WHERE id = ? AND tenant_id = ?',
+            "SELECT id FROM posts WHERE id = ? AND tenant_id = ? AND status = 'published'",
             [post_id, tenantId]
         );
         if (posts.length === 0) {
@@ -211,7 +211,7 @@ router.post('/posts/:post_id/comments', async (req, res) => {
             id: result.insertId
         });
     } catch (error) {
-        console.error('[PUBLIC API ERROR] Submit comment:', error);
+        console.error('[PUBLIC API ERROR] Submit comment:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -238,7 +238,7 @@ router.get('/posts/:post_id/comments', async (req, res) => {
 
         res.json(comments);
     } catch (error) {
-        console.error('[PUBLIC API ERROR] Get comments:', error);
+        console.error('[PUBLIC API ERROR] Get comments:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -272,7 +272,7 @@ router.get('/pages', async (req, res) => {
 
         res.json(normalizedPages);
     } catch (error) {
-        console.error('[PUBLIC API ERROR] Get pages:', error);
+        console.error('[PUBLIC API ERROR] Get pages:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -310,7 +310,7 @@ router.get('/pages/:slug', async (req, res) => {
 
         res.json(page);
     } catch (error) {
-        console.error('[PUBLIC API ERROR] Get single page:', error);
+        console.error('[PUBLIC API ERROR] Get single page:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -336,7 +336,7 @@ router.get('/navigation', async (req, res) => {
 
         res.json(navItems);
     } catch (error) {
-        console.error('[PUBLIC API ERROR] Get navigation:', error);
+        console.error('[PUBLIC API ERROR] Get navigation:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -389,7 +389,7 @@ router.get('/settings', async (req, res) => {
 
         res.json(settings);
     } catch (error) {
-        console.error('[PUBLIC API ERROR] Get settings:', error);
+        console.error('[PUBLIC API ERROR] Get settings:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -406,7 +406,7 @@ router.get('/post-categories', async (req, res) => {
         );
         res.json(categories);
     } catch (error) {
-        console.error('[PUBLIC API ERROR] Get categories:', error);
+        console.error('[PUBLIC API ERROR] Get categories:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });

@@ -36,7 +36,6 @@ const { buildCdnPath } = require('../utils/pathHelper');
 // ── Configuration ──────────────────────────────────────────
 const BATCH_SIZE = 5;
 const TEMP_DIR = path.resolve(__dirname, '..', 'temp_migration');
-const CDN_PROJECT_ID = process.env.CDN_PROJECT_ID || 'kd59zf94';
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -137,13 +136,13 @@ async function processBatch(batch, batchIndex, totalCount) {
 
       // ── Step 4: Update MySQL ──
       // Use the same URL-mapping logic as buildMediaUrl in server.js
-      const mimeType = (media.file_type || '').toLowerCase();
+      const normalizedMimeType = mimeType.toLowerCase();
       let newFileUrl;
-      if (mimeType.startsWith('image/')) {
+      if (normalizedMimeType.startsWith('image/')) {
         newFileUrl = `https://drive.google.com/thumbnail?id=${newFileId}&sz=w1200`;
-      } else if (mimeType.startsWith('video/')) {
+      } else if (normalizedMimeType.startsWith('video/')) {
         newFileUrl = `https://drive.google.com/file/d/${newFileId}/preview`;
-      } else if (mimeType === 'application/pdf') {
+      } else if (normalizedMimeType === 'application/pdf') {
         newFileUrl = `https://drive.google.com/file/d/${newFileId}/preview`;
       } else {
         newFileUrl = `https://api-cdn.kroombox.com/api/bridge/view/${newFileId}`;

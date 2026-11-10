@@ -7,12 +7,13 @@ require('dotenv').config();
 const { sendInquiryNotification, sendSuperAdminVerificationCode } = require('./services/emailService');
 const { SUPER_ADMIN_EMAIL } = require('./config/superAdmin');
 const { normalizeEmail, hasGlobalSuperAdminRole, credentialVersion, verificationCodeHash, constantTimeHexEqual } = require('./utils/superAdminAuth');
-const { logActivity } = require('./services/loggerService');
-const JWT_SECRET = process.env.JWT_SECRET || 'uni-inside-secret-key-2026';
-if (!process.env.JWT_SECRET) {
-    console.warn('[WARNING] JWT_SECRET is not defined in environment variables. Using fallback key for development.');
+const { parseTenantId, can, resolveTenantContext } = require('./security/tenantAccess');
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || Buffer.byteLength(JWT_SECRET, 'utf8') < 32) {
+    throw new Error('JWT_SECRET must be configured with at least 32 bytes.');
 }
 const db = require('./server/lib/db');
+const { logActivity } = require('./services/loggerService');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -20,26 +21,42 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { deepSanitizeContent } = require('./utils/sanitizeHtml');
+const { sanitizePublicJson } = require('./utils/publicContent');
 // Cloudinary removed in favor of Kroombox CDN
 
 const app = express();
 
-// Trust the first proxy hop (Render's load balancer).
-// Required for express-rate-limit to read client IPs correctly
-// from the X-Forwarded-For header without ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
+// Report stable diagnostics without serializing SQL, credentials, or upstream responses.
+const logOperationalError = (scope, error) => {
+    console.error(scope, { code: error?.code || error?.name || 'UNKNOWN', status: error?.response?.status || null });
+};
+
+// Trust one reverse-proxy hop; never trust an arbitrary X-Forwarded-For chain.
 app.set('trust proxy', 1);
+
+const allowedOrigins = new Set();
+for (const value of [process.env.FRONTEND_URL, ...(process.env.CORS_ALLOWED_ORIGINS || '').split(',')]) {
+  if (!value?.trim()) continue;
+  try { allowedOrigins.add(new URL(value.trim()).origin); } catch { throw new Error('Invalid CORS frontend origin configuration.'); }
+}
+if (!process.env.FRONTEND_URL && process.env.NODE_ENV !== 'production') {
+  allowedOrigins.add('http://localhost:3000');
+  allowedOrigins.add('http://localhost:5173');
+}
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-
-  // Allow any origin for testing purposes
-  res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  const isPublic = /^\/api\/(?:public\/|v1\/public\/|v1\/health(?:\/|$)|v1\/inquiries(?:\/|$))/.test(req.path);
+  if (isPublic) res.setHeader('Access-Control-Allow-Origin', '*');
+  else if (origin && allowedOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else if (origin) {
+    return res.status(403).json({ error: 'Origin not allowed.' });
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, x-api-key, x-active-tenant');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-
-  console.log('CORS Bypass active for:', req.method, req.url);
 
   // Immediate response for Preflight (OPTIONS)
   if (req.method === 'OPTIONS') {
@@ -50,6 +67,9 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// Sanitize public JSON at the response boundary, including legacy stored HTML.
+app.use(['/api/public', '/api/v1/public'], sanitizePublicJson);
 
 // Verbose Request Logging
 app.use((req, res, next) => {
@@ -78,12 +98,15 @@ app.use('/api/v1/health', healthRoutes);
 app.get(['/api/public/site/:subdomain', '/api/public/site/:subdomain/:slug'], async (req, res) => {
     const { subdomain } = req.params;
     const cleanSlug = (req.params.slug || 'home').replace(/^\/+/, '');
+    if (!/^[a-z0-9_-]{1,100}$/i.test(subdomain) || !/^[a-z0-9_-]{1,255}$/i.test(cleanSlug)) {
+        return res.status(404).json({ error: 'Not found' });
+    }
 
     console.log(`[PREVIEW] Domain lookup: ${subdomain}, View slug: ${cleanSlug}`);
 
     try {
         // 1. Resolve Tenant first
-        const [tenants] = await db.execute('SELECT id FROM tenants WHERE subdomain = ?', [subdomain]);
+        const [tenants] = await db.execute("SELECT id FROM tenants WHERE subdomain = ? AND status = 'active'", [subdomain]);
         if (tenants.length === 0) return res.status(404).json({ error: 'Tenant tidak ditemukan.' });
         const tenantId = tenants[0].id;
 
@@ -93,7 +116,7 @@ app.get(['/api/public/site/:subdomain', '/api/public/site/:subdomain/:slug'], as
             `SELECT p.*, s.site_name, s.tagline, s.global_options, s.logo_url
              FROM pages p
              LEFT JOIN settings s ON p.tenant_id = s.tenant_id
-             WHERE p.slug = ? AND p.tenant_id = ?
+             WHERE p.slug = ? AND p.tenant_id = ? AND p.status = 'published'
              LIMIT 1`,
             [cleanSlug, tenantId]
         );
@@ -128,9 +151,9 @@ app.get(['/api/public/site/:subdomain', '/api/public/site/:subdomain/:slug'], as
             `SELECT p.*, pc.name AS category_name, pc.slug AS category_slug,
                     s.site_name, s.tagline, s.global_options, s.logo_url
              FROM posts p
-             LEFT JOIN post_categories pc ON p.category_id = pc.id
+             LEFT JOIN post_categories pc ON p.category_id = pc.id AND pc.tenant_id = p.tenant_id
              LEFT JOIN settings s ON p.tenant_id = s.tenant_id
-             WHERE p.slug = ? AND p.tenant_id = ?
+             WHERE p.slug = ? AND p.tenant_id = ? AND p.status = 'published'
              LIMIT 1`,
             [cleanSlug, tenantId]
         );
@@ -162,8 +185,8 @@ app.get(['/api/public/site/:subdomain', '/api/public/site/:subdomain/:slug'], as
 
         res.status(404).json({ error: `Not found: ${cleanSlug} for site ${subdomain}` });
     } catch (error) {
-        console.error('[PREVIEW ERROR] Database failure during site resolution:', error);
-        res.status(500).json({ error: 'Data resolution failure', details: error.message });
+        logOperationalError('[PREVIEW ERROR] Database failure during site resolution:', error);
+        res.status(500).json({ error: 'Data resolution failure' });
     }
 });
 
@@ -177,10 +200,9 @@ app.get('/api/public/updates', async (req, res) => {
         }
 
         const limitVal = req.query.limit;
-        let safeLimit = parseInt(limitVal, 10);
-        if (isNaN(safeLimit) || safeLimit <= 0) {
-            safeLimit = 10;
-        }
+        let safeLimit = Number(limitVal);
+        if (!Number.isSafeInteger(safeLimit) || safeLimit <= 0) safeLimit = 10;
+        safeLimit = Math.min(safeLimit, 100);
 
         // Task 2: Defensive Query Construction
         let query = 'SELECT * FROM update_history';
@@ -218,8 +240,8 @@ app.get('/api/public/updates', async (req, res) => {
 
         res.json(updatesWithImages);
     } catch (error) {
-        console.error('[API ERROR] Get public updates:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('[API ERROR] Get public updates:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -242,15 +264,15 @@ app.get('/api/v1/public/faqs', async (req, res) => {
         const [faqs] = await db.execute('SELECT * FROM global_faqs ORDER BY priority ASC, created_at DESC');
         res.json(faqs);
     } catch (error) {
-        console.error('[API ERROR] Get public faqs:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('[API ERROR] Get public faqs:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
 // Auth Middleware
 const authenticateToken = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = typeof authHeader === 'string' && /^Bearer [^\s]+$/.test(authHeader) ? authHeader.slice(7) : null;
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
     let user;
@@ -262,14 +284,12 @@ const authenticateToken = async (req, res, next) => {
 
     try {
         const override = req.headers['x-active-tenant'];
-        let activeTenantId = user.tenant_id;
-        
-        if (override && override !== 'undefined' && override !== 'null') {
-            const parsed = parseInt(override, 10);
-            if (!isNaN(parsed)) {
-                activeTenantId = parsed;
-            }
+        const hasOverride = override !== undefined && override !== '';
+        const requestedTenantId = hasOverride ? parseTenantId(override) : (user.tenant_id == null ? null : parseTenantId(user.tenant_id));
+        if ((hasOverride || user.tenant_id != null) && !requestedTenantId) {
+            return res.status(400).json({ error: 'Invalid tenant ID' });
         }
+        if (!parseTenantId(user.userId)) return res.status(401).json({ error: 'Unauthorized' });
         
         const [userCheck] = await db.execute('SELECT name, email, password_hash FROM users WHERE id = ?', [user.userId]);
         if (userCheck.length === 0) return res.status(401).json({ error: 'Unauthorized' });
@@ -282,36 +302,19 @@ const authenticateToken = async (req, res, next) => {
             if (!process.env.JWT_SECRET || !constantTimeHexEqual(user.credential_version, credentialVersion(userCheck[0].password_hash, JWT_SECRET))) {
                 return res.status(401).json({ error: 'Sesi Super Admin kedaluwarsa. Silakan masuk kembali.' });
             }
-            user.role = 'super_admin';
             user.isSuperAdmin = true;
-        } else if (activeTenantId) {
-            const [membership] = await db.execute(
-                "SELECT role FROM tenant_users WHERE tenant_id = ? AND user_id = ? AND status = 'active'",
-                [activeTenantId, user.userId]
-            );
-            if (membership.length > 0) {
-                user.role = membership[0].role === 'super_admin' ? 'guest' : membership[0].role;
-            } else {
-                user.role = 'guest';
-            }
-        } else {
-            user.role = 'guest';
         }
-        
+        const tenantContext = requestedTenantId
+            ? await resolveTenantContext(db, requestedTenantId, user.userId, isSuperAdmin)
+            : null;
+        if (hasOverride && !tenantContext) return res.status(403).json({ error: 'Workspace access denied.' });
+        user.role = isSuperAdmin ? 'super_admin' : (tenantContext?.role || 'guest');
+        user.tenant_id = tenantContext?.tenantId || null;
         req.user = user;
-        req.user.tenant_id = activeTenantId;
-
-        // Guest Role Read-Only Interceptor
-        // Exemption: Personal profile endpoints (/api/user/*) are user-scoped,
-        // not tenant-content-scoped, so guests can manage their own account.
-        const isPersonalRoute = req.originalUrl.startsWith('/api/user/');
-        if (user.role === 'guest' && req.method !== 'GET' && req.method !== 'OPTIONS' && !isPersonalRoute) {
-            return res.status(403).json({ error: 'Akses Terbatas: Role Guest hanya dapat melihat data.' });
-        }
-        
+        req.tenantContext = tenantContext;
         next();
     } catch (dbError) {
-        console.error('[AUTH] Dynamic role resolution failed:', dbError);
+        logOperationalError('[AUTH] Dynamic role resolution failed:', dbError);
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 };
@@ -337,7 +340,7 @@ app.get('/api/v1/superadmin/infrastructure/stats', authenticateToken, verifySupe
             await db.execute('SELECT 1');
             dbStatus = 'connected';
         } catch (e) {
-            console.error('DB Health Check Failed:', e);
+            logOperationalError('DB Health Check Failed:', e);
         }
 
         // 2. Global Row Counts
@@ -353,7 +356,7 @@ app.get('/api/v1/superadmin/infrastructure/stats', authenticateToken, verifySupe
             const totalUsedBytes = totalStorageQuery[0].total_used || 0;
             totalUsedMB = Math.round(totalUsedBytes / (1024 * 1024));
         } catch(err) {
-            console.warn('[SUPER ADMIN] file_size column might not exist or error summing:', err.message);
+            console.warn('[SUPER ADMIN] Storage total query failed:', err.code || 'UNKNOWN');
         }
 
         let formattedTopConsumers = [];
@@ -372,7 +375,7 @@ app.get('/api/v1/superadmin/infrastructure/stats', authenticateToken, verifySupe
                 total_size_mb: Math.round((c.total_size_bytes || 0) / (1024 * 1024))
             }));
         } catch(err) {
-            console.warn('[SUPER ADMIN] top consumers query error:', err.message);
+            console.warn('[SUPER ADMIN] Top consumers query failed:', err.code || 'UNKNOWN');
         }
 
         res.json({
@@ -389,8 +392,8 @@ app.get('/api/v1/superadmin/infrastructure/stats', authenticateToken, verifySupe
             }
         });
     } catch (error) {
-        console.error('[SUPER ADMIN] Fetch infra stats error:', error);
-        res.status(500).json({ error: 'Internal Server Error', details: error.message });
+        logOperationalError('[SUPER ADMIN] Fetch infra stats error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -401,7 +404,7 @@ app.get('/api/v1/superadmin/faqs', authenticateToken, verifySuperAdmin, async (r
         const [faqs] = await db.execute('SELECT * FROM global_faqs ORDER BY priority ASC, created_at DESC');
         res.json(faqs);
     } catch (error) {
-        console.error('[SUPER ADMIN] Fetch faqs error:', error);
+        logOperationalError('[SUPER ADMIN] Fetch faqs error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -417,7 +420,7 @@ app.post('/api/v1/superadmin/faqs', authenticateToken, verifySuperAdmin, async (
         );
         res.status(201).json({ success: true });
     } catch (error) {
-        console.error('[SUPER ADMIN] Add faq error:', error);
+        logOperationalError('[SUPER ADMIN] Add faq error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -431,7 +434,7 @@ app.put('/api/v1/superadmin/faqs/:id', authenticateToken, verifySuperAdmin, asyn
         );
         res.json({ success: true });
     } catch (error) {
-        console.error('[SUPER ADMIN] Update faq error:', error);
+        logOperationalError('[SUPER ADMIN] Update faq error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -441,7 +444,7 @@ app.delete('/api/v1/superadmin/faqs/:id', authenticateToken, verifySuperAdmin, a
         await db.execute('DELETE FROM global_faqs WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (error) {
-        console.error('[SUPER ADMIN] Delete faq error:', error);
+        logOperationalError('[SUPER ADMIN] Delete faq error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -460,7 +463,7 @@ app.get('/api/v1/superadmin/tenants', authenticateToken, verifySuperAdmin, async
         const [tenants] = await db.execute(query);
         res.json(tenants);
     } catch (error) {
-        console.error('[SUPER ADMIN] Fetch tenants error:', error);
+        logOperationalError('[SUPER ADMIN] Fetch tenants error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -501,7 +504,7 @@ app.put('/api/v1/superadmin/tenants/:tenantId/admins/:adminId/password', authent
         logActivity(tenantId, req.user.userId, req.user.name || req.user.email, 'super_admin', `Emergency password reset for admin ${adminId}`, 'success');
         res.json({ message: 'Password admin tenant berhasil direset.' });
     } catch (error) {
-        console.error('[SUPER ADMIN] Emergency password reset error:', error);
+        logOperationalError('[SUPER ADMIN] Emergency password reset error:', error);
         res.status(500).json({ error: 'Gagal mereset password admin tenant.' });
     }
 });
@@ -516,7 +519,7 @@ app.patch('/api/v1/superadmin/tenants/:id/status', authenticateToken, verifySupe
         await db.execute('UPDATE tenants SET status = ? WHERE id = ?', [status, tenantId]);
         res.json({ success: true, status });
     } catch (error) {
-        console.error('[SUPER ADMIN] Update tenant status error:', error);
+        logOperationalError('[SUPER ADMIN] Update tenant status error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -531,8 +534,8 @@ app.patch('/api/v1/superadmin/tenants/:id/status', authenticateToken, verifySupe
 // =============================================================
 app.post('/api/v1/superadmin/impersonate/:tenantId', authenticateToken, verifySuperAdmin, async (req, res) => {
     try {
-        const tenantId = parseInt(req.params.tenantId, 10);
-        if (isNaN(tenantId)) return res.status(400).json({ error: 'Invalid tenant ID' });
+        const tenantId = parseTenantId(req.params.tenantId);
+        if (!tenantId) return res.status(400).json({ error: 'Invalid tenant ID' });
 
         // Verify the tenant exists
         const [tenants] = await db.execute('SELECT id, subdomain, name FROM tenants WHERE id = ?', [tenantId]);
@@ -552,6 +555,9 @@ app.post('/api/v1/superadmin/impersonate/:tenantId', authenticateToken, verifySu
             [tenantId]
         );
 
+        const recorded = await logActivity(tenantId, req.user.userId, req.user.name || req.user.email, 'super_admin', 'Shadow workspace selected', 'attempt');
+        if (!recorded) return res.status(503).json({ error: 'Audit service unavailable.' });
+
         console.log(`[SUPER ADMIN] Impersonating tenant ${tenantId} (${tenant.subdomain}) in shadow mode`);
 
         res.json({
@@ -562,7 +568,7 @@ app.post('/api/v1/superadmin/impersonate/:tenantId', authenticateToken, verifySu
             admin_email: adminRows.length > 0 ? adminRows[0].email : null
         });
     } catch (error) {
-        console.error('[SUPER ADMIN] Impersonate error:', error);
+        logOperationalError('[SUPER ADMIN] Impersonate error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -576,7 +582,7 @@ app.get('/api/super-admin/stats', authenticateToken, verifySuperAdmin, async (re
             totalTenants: tenantCount[0].total
         });
     } catch (error) {
-        console.error('[SUPER ADMIN ERROR] Stats fetch failed:', error);
+        logOperationalError('[SUPER ADMIN ERROR] Stats fetch failed:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -600,7 +606,7 @@ app.get('/api/v1/superadmin/updates', authenticateToken, verifySuperAdmin, async
         }));
         res.json(updatesWithImages);
     } catch (error) {
-        console.error('[SUPER ADMIN] Fetch updates error:', error);
+        logOperationalError('[SUPER ADMIN] Fetch updates error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -626,7 +632,7 @@ app.post('/api/v1/superadmin/updates', authenticateToken, verifySuperAdmin, asyn
         res.json({ success: true, id: updateId });
     } catch (error) {
         await connection.rollback();
-        console.error('[SUPER ADMIN] Add update error:', error);
+        logOperationalError('[SUPER ADMIN] Add update error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     } finally {
         connection.release();
@@ -655,7 +661,7 @@ app.put('/api/v1/superadmin/updates/:id', authenticateToken, verifySuperAdmin, a
         res.json({ success: true });
     } catch (error) {
         await connection.rollback();
-        console.error('[SUPER ADMIN] Edit update error:', error);
+        logOperationalError('[SUPER ADMIN] Edit update error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     } finally {
         connection.release();
@@ -667,7 +673,7 @@ app.delete('/api/v1/superadmin/updates/:id', authenticateToken, verifySuperAdmin
         await db.execute('DELETE FROM update_history WHERE id = ? OR id_update = ?', [req.params.id, req.params.id]);
         res.json({ success: true });
     } catch (error) {
-        console.error('[SUPER ADMIN] Delete update error:', error);
+        logOperationalError('[SUPER ADMIN] Delete update error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -689,8 +695,8 @@ app.post('/api/v1/superadmin/broadcast', authenticateToken, verifySuperAdmin, as
         
         res.json({ success: true });
     } catch (error) {
-        console.error('[SUPER ADMIN] Broadcast error:', error);
-        res.status(500).json({ error: 'Database connection failed: ' + error.message });
+        logOperationalError('[SUPER ADMIN] Broadcast error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -714,10 +720,10 @@ app.get('/api/admin/start-migration', authenticateToken, verifySuperAdmin, async
             ...result,
         });
     } catch (error) {
-        console.error('[MIGRATION] ❌ Fatal error:', error);
+        logOperationalError('[MIGRATION] ❌ Fatal error:', error);
         res.status(500).json({
             success: false,
-            error: 'Migration failed: ' + error.message,
+            error: 'Migration failed',
         });
     } finally {
         migrationRunning = false;
@@ -738,6 +744,14 @@ const superAdminCompleteLimiter = rateLimit({
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     message: { error: 'Terlalu banyak percobaan. Coba lagi nanti.' }
+});
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'Terlalu banyak percobaan login. Coba lagi nanti.' }
+});
+const registrationLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'Terlalu banyak pendaftaran. Coba lagi nanti.' }
 });
 
 // Both initial enrollment and account recovery require possession of the
@@ -774,7 +788,7 @@ app.post('/api/auth/super-admin/request-code', superAdminCodeLimiter, async (req
         }
         return res.json(sentMessage);
     } catch (error) {
-        console.error('[SUPER ADMIN] Verification request failed:', error);
+        logOperationalError('[SUPER ADMIN] Verification request failed:', error);
         return res.status(500).json({ error: 'Gagal meminta kode verifikasi.' });
     }
 });
@@ -849,14 +863,14 @@ app.post('/api/auth/super-admin/complete', superAdminCompleteLimiter, async (req
         return res.json({ message: 'Akun Super Admin siap. Silakan login dengan email dan password baru.' });
     } catch (error) {
         if (connection) await connection.rollback();
-        console.error('[SUPER ADMIN] Verification completion failed:', error);
+        logOperationalError('[SUPER ADMIN] Verification completion failed:', error);
         return res.status(500).json({ error: 'Gagal menyelesaikan verifikasi Super Admin.' });
     } finally {
         if (connection) connection.release();
     }
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', registrationLimiter, async (req, res) => {
     let { name, email, password } = req.body;
     try {
         if (!email || !password) {
@@ -866,11 +880,11 @@ app.post('/api/auth/register', async (req, res) => {
         if (email === SUPER_ADMIN_EMAIL) {
             return res.status(403).json({ error: 'Alamat ini hanya dapat didaftarkan melalui verifikasi Super Admin.' });
         }
-        console.log(`[AUTH] Checking for existing user: ${email}`);
-        const [existing] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
+        console.log('[AUTH] Registration requested.');
+        const [existing] = await db.execute('SELECT id FROM users WHERE email = ?', [email]);
         if (existing.length > 0) {
-            console.log(`[AUTH] Registration rejected: Email ${email} already registered`);
-            return res.status(400).json({ error: 'Email already registered' });
+            console.log('[AUTH] Registration rejected.');
+            return res.status(400).json({ error: 'Tidak dapat menyelesaikan pendaftaran.' });
         }
         
         console.log(`[AUTH] Generating placeholder tenant`);
@@ -878,9 +892,9 @@ app.post('/api/auth/register', async (req, res) => {
         const [tenant] = await db.execute('INSERT INTO tenants (name, subdomain) VALUES (?, ?)', ['My Site', subdomain]);
         const tenantId = tenant.insertId;
 
-        console.log(`[AUTH] Hashing password for: ${email}`);
+        console.log('[AUTH] Hashing password.');
         const hashedPassword = await bcrypt.hash(password, 10);
-        console.log(`[AUTH] Inserting user into database: ${email}`);
+        console.log('[AUTH] Creating user.');
         const [result] = await db.execute(
             'INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)',
             [name, email, hashedPassword]
@@ -914,12 +928,12 @@ app.post('/api/auth/register', async (req, res) => {
             user: { id: userId, name, email, tenant_id: tenantId, role: 'admin', site_name: 'My Site' } 
         });
     } catch (error) {
-        console.error('DATABASE ERROR:', error);
-        res.status(500).json({ error: error.message || 'Internal Server Error' });
+        logOperationalError('DATABASE ERROR:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
     try {
         let { email, password } = req.body || {};
         
@@ -928,13 +942,13 @@ app.post('/api/auth/login', async (req, res) => {
         }
 
         email = email.trim().toLowerCase();
-        console.log(`[AUTH] Login attempt for email: ${email}`);
+        console.log('[AUTH] Login attempt.');
 
         // 1. Search for user by email
         const [users] = await db.execute('SELECT id, name, email, profile_picture_url, password_hash FROM users WHERE email = ?', [email]);
         
         if (!users || users.length === 0) {
-            console.log(`[AUTH] Login failed: User ${email} not found`);
+            console.log('[AUTH] Login failed.');
             return res.status(401).json({ error: 'Kredensial tidak valid' });
         }
         
@@ -943,13 +957,13 @@ app.post('/api/auth/login', async (req, res) => {
         // 2. Compare password with hashed version from DB
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
-            console.log(`[AUTH] Login failed: Invalid password for ${email}`);
+            console.log('[AUTH] Login failed.');
             return res.status(401).json({ error: 'Kredensial tidak valid' });
         }
         
         // 3. Retrieve tenant_id and role from tenant_users where status is active
         const [tenantUsers] = await db.execute(
-            "SELECT tenant_id, role FROM tenant_users WHERE user_id = ? AND status = 'active' ORDER BY tenant_id ASC LIMIT 1", 
+            "SELECT tu.tenant_id, tu.role FROM tenant_users tu JOIN tenants t ON t.id = tu.tenant_id AND t.status = 'active' WHERE tu.user_id = ? AND tu.status = 'active' ORDER BY tu.tenant_id ASC LIMIT 1",
             [user.id]
         );
         let tenant_id = tenantUsers.length > 0 ? tenantUsers[0].tenant_id : null;
@@ -958,7 +972,7 @@ app.post('/api/auth/login', async (req, res) => {
 
         // 3b. Identify primary tenant (the first admin workspace, i.e. the one created during registration)
         const [adminTenants] = await db.execute(
-            "SELECT tenant_id FROM tenant_users WHERE user_id = ? AND role = 'admin' AND status = 'active' ORDER BY tenant_id ASC LIMIT 1",
+            "SELECT tu.tenant_id FROM tenant_users tu JOIN tenants t ON t.id = tu.tenant_id AND t.status = 'active' WHERE tu.user_id = ? AND tu.role = 'admin' AND tu.status = 'active' ORDER BY tu.tenant_id ASC LIMIT 1",
             [user.id]
         );
         const primary_tenant_id = adminTenants.length > 0 ? adminTenants[0].tenant_id : tenant_id;
@@ -968,14 +982,7 @@ app.post('/api/auth/login', async (req, res) => {
             if (!process.env.JWT_SECRET) return res.status(503).json({ error: 'Konfigurasi keamanan server belum lengkap.' });
             role = 'super_admin';
         }
-
-        // Suspend check
-        if (tenant_id && role !== 'super_admin') {
-            const [tenantData] = await db.execute('SELECT status FROM tenants WHERE id = ?', [tenant_id]);
-            if (tenantData.length > 0 && tenantData[0].status === 'suspended') {
-                return res.status(403).json({ error: 'Akses ditolak. Tenant Anda telah ditangguhkan (Suspended) oleh Super Admin.' });
-            }
-        }
+        if (!isSuperAdmin && !tenant_id) return res.status(403).json({ error: 'Tidak ada workspace aktif yang dapat diakses.' });
 
         // 4. Fetch site_name for frontend redirection logic (from PRIMARY tenant)
         let site_name = 'My Site';
@@ -992,7 +999,7 @@ app.post('/api/auth/login', async (req, res) => {
             ...(isSuperAdmin ? { credential_version: credentialVersion(user.password_hash, JWT_SECRET) } : {})
         }, JWT_SECRET, { expiresIn: '7d' });
         
-        console.log(`[AUTH] Login successful for ${email}. Tenant: ${tenant_id || 'NONE'}, Role: ${role}`);
+        console.log('[AUTH] Login successful.');
 
         // 5. Response Payload: return token, user object, and top-level tenant_id
         res.json({ 
@@ -1011,10 +1018,10 @@ app.post('/api/auth/login', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('[AUTH CRITICAL ERROR] Login logic failure:', error);
+        logOperationalError('[AUTH CRITICAL ERROR] Login logic failure:', error);
         // Ensure we send a proper JSON response to prevent CORS issues on client browser
         if (!res.headersSent) {
-            res.status(500).json({ error: 'Internal Server Error', details: error.message });
+            res.status(500).json({ error: 'Internal Server Error' });
         }
     }
 });
@@ -1026,7 +1033,9 @@ app.post('/api/auth/setup', authenticateToken, async (req, res) => {
     const tenantId = req.user.tenant_id;
     try {
         console.log(`[AUTH] Setting up tenant for User ID: ${userId}, Site Name: ${site_name}`);
-        if (!tenantId) return res.status(400).json({ error: 'Tenant context is missing.' });
+        if (!req.tenantContext || !can(req.tenantContext.role, 'settings')) {
+            return res.status(403).json({ error: 'Workspace access denied.' });
+        }
 
         // Generate Subdomain automatically from Site Name
         const generatedSubdomain = site_name
@@ -1059,11 +1068,11 @@ app.post('/api/auth/setup', authenticateToken, async (req, res) => {
         res.status(200).json({ 
             message: 'Setup completed', 
             token, 
-            user: { id: userId, email: req.user.email, tenant_id: tenantId, role: 'admin', site_name: site_name } 
+            user: { id: userId, email: req.user.email, tenant_id: tenantId, role: req.tenantContext.role, site_name: site_name }
         });
     } catch (error) {
-        console.error('[AUTH ERROR] Setup Transaction Failure:', error);
-        res.status(500).json({ error: error.message || 'Internal Server Error' });
+        logOperationalError('[AUTH ERROR] Setup Transaction Failure:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -1078,43 +1087,36 @@ app.post('/api/auth/setup', authenticateToken, async (req, res) => {
 app.post('/api/auth/switch-workspace', authenticateToken, async (req, res) => {
     const { tenant_id } = req.body;
     const userId = req.user.userId;
-
-    if (!tenant_id) {
-        return res.status(400).json({ error: 'tenant_id is required.' });
-    }
+    const targetTenantId = parseTenantId(tenant_id);
+    if (!targetTenantId) return res.status(400).json({ error: 'Invalid tenant ID.' });
 
     try {
-        // 1. Verify the user has active membership in the target tenant
-        const [membership] = await db.execute(
-            "SELECT role, status FROM tenant_users WHERE tenant_id = ? AND user_id = ? AND status = 'active'",
-            [tenant_id, userId]
-        );
-
         const isSuperAdmin = req.user.isSuperAdmin === true;
-
-        if (membership.length === 0 && !isSuperAdmin) {
-            return res.status(403).json({ error: 'Anda tidak memiliki akses aktif ke workspace ini.' });
+        const targetContext = await resolveTenantContext(db, targetTenantId, userId, isSuperAdmin);
+        if (!targetContext) return res.status(403).json({ error: 'Anda tidak memiliki akses aktif ke workspace ini.' });
+        if (isSuperAdmin) {
+            const recorded = await logActivity(targetTenantId, userId, req.user.name || req.user.email, 'super_admin', 'Shadow workspace selected', 'attempt');
+            if (!recorded) return res.status(503).json({ error: 'Audit service unavailable.' });
         }
-
-        const targetRole = isSuperAdmin ? 'super_admin' : (membership.length > 0 && membership[0].role !== 'super_admin' ? membership[0].role : 'guest');
+        const targetRole = targetContext.role;
 
         // 2. Fetch site_name for the target workspace
         let site_name = 'My Site';
-        const [settings] = await db.execute('SELECT site_name FROM settings WHERE tenant_id = ?', [tenant_id]);
+        const [settings] = await db.execute('SELECT site_name FROM settings WHERE tenant_id = ?', [targetTenantId]);
         if (settings && settings.length > 0) {
             site_name = settings[0].site_name;
         }
 
         // 3. Identify the user's primary tenant (where role is admin)
         const [adminTenants] = await db.execute(
-            "SELECT tenant_id FROM tenant_users WHERE user_id = ? AND role = 'admin' AND status = 'active' ORDER BY tenant_id ASC LIMIT 1",
+            "SELECT tu.tenant_id FROM tenant_users tu JOIN tenants t ON t.id = tu.tenant_id AND t.status = 'active' WHERE tu.user_id = ? AND tu.role = 'admin' AND tu.status = 'active' ORDER BY tu.tenant_id ASC LIMIT 1",
             [userId]
         );
-        const primary_tenant_id = adminTenants.length > 0 ? adminTenants[0].tenant_id : tenant_id;
+        const primary_tenant_id = adminTenants.length > 0 ? adminTenants[0].tenant_id : targetTenantId;
 
         // 4. Re-issue JWT with the target tenant context
         const newToken = jwt.sign(
-            { userId, email: req.user.email, tenant_id: parseInt(tenant_id, 10), role: targetRole, ...(isSuperAdmin ? { credential_version: req.user.credential_version } : {}) },
+            { userId, email: req.user.email, tenant_id: targetTenantId, role: targetRole, ...(isSuperAdmin ? { credential_version: req.user.credential_version } : {}) },
             JWT_SECRET,
             { expiresIn: '7d' }
         );
@@ -1123,7 +1125,7 @@ app.post('/api/auth/switch-workspace', authenticateToken, async (req, res) => {
         const [userRows] = await db.execute('SELECT name, email, profile_picture_url FROM users WHERE id = ?', [userId]);
         const userInfo = userRows.length > 0 ? userRows[0] : {};
 
-        console.log(`[AUTH] Workspace switched: User ${userId} → Tenant ${tenant_id} (Role: ${targetRole})`);
+        console.log(`[AUTH] Workspace switched: User ${userId} → Tenant ${targetTenantId} (Role: ${targetRole})`);
 
         res.json({
             token: newToken,
@@ -1132,17 +1134,17 @@ app.post('/api/auth/switch-workspace', authenticateToken, async (req, res) => {
                 name: userInfo.name,
                 email: userInfo.email,
                 profile_picture_url: userInfo.profile_picture_url,
-                tenant_id: parseInt(tenant_id, 10),
+                tenant_id: targetTenantId,
                 role: targetRole,
                 site_name
             },
-            tenant_id: parseInt(tenant_id, 10),
+            tenant_id: targetTenantId,
             primary_tenant_id,
-            workspace_type: parseInt(tenant_id, 10) === primary_tenant_id ? 'primary' : 'guest'
+            workspace_type: targetTenantId === primary_tenant_id ? 'primary' : 'guest'
         });
     } catch (error) {
-        console.error('[AUTH ERROR] Switch workspace:', error);
-        res.status(500).json({ error: 'Internal Server Error', details: error.message });
+        logOperationalError('[AUTH ERROR] Switch workspace:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -1216,8 +1218,8 @@ app.post('/api/v1/inquiries', inquiryLimiter, apiAuth, async (req, res) => {
                 subject: (subject || '').trim(),
                 message: message.trim(),
                 siteName,
-                cmsUrl: process.env.APP_URL || 'https://uni-verse-headless-cms.onrender.com'
-            }).catch(err => console.error('[INQUIRY] Email notification error:', err.message));
+                cmsUrl: process.env.FRONTEND_URL || ''
+            }).catch(err => logOperationalError('[INQUIRY] Email notification error:', err));
         }
 
         res.status(201).json({
@@ -1225,8 +1227,8 @@ app.post('/api/v1/inquiries', inquiryLimiter, apiAuth, async (req, res) => {
             id: result.insertId
         });
     } catch (error) {
-        console.error('[INQUIRY ERROR] Submit inquiry:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('[INQUIRY ERROR] Submit inquiry:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -1239,17 +1241,8 @@ app.use('/api/v1/public', dataRoutes);
 // Protected routes below
 app.use('/api', authenticateToken);
 
-// Override the hardcoded tenant_id = 1 dynamically based on req.user.tenant_id
-// Supports workspace switching via X-Active-Tenant header
-// Task 4: Validates that user has active membership in the requested tenant
-const getTenantId = (req) => {
-    const override = req.headers['x-active-tenant'];
-    if (override) {
-        const parsed = parseInt(override, 10);
-        if (!isNaN(parsed) && parsed > 0) return parsed;
-    }
-    return req.user.tenant_id;
-};
+// Every tenant-scoped route receives this ID only after database authorization.
+const getTenantId = (req) => req.tenantContext?.tenantId || null;
 
 /**
  * buildMediaUrl — Centralized URL builder for all media types.
@@ -1304,24 +1297,34 @@ const buildMediaUrl = (fileId, mimeType, rawUrl) => {
     return url;
 };
 
-// Async tenant access validator middleware (used on sensitive write routes)
-const validateTenantAccess = async (req, res, next) => {
-    try {
-        const tid = getTenantId(req);
-        const userId = req.user.userId;
-        const [rows] = await db.execute(
-            "SELECT status FROM tenant_users WHERE tenant_id = ? AND user_id = ? AND status = 'active'",
-            [tid, userId]
-        );
-        if (rows.length === 0) {
-            return res.status(403).json({ error: 'Anda tidak memiliki akses aktif ke workspace ini.' });
-        }
-        next();
-    } catch (err) {
-        console.error('[AUTH] Tenant access validation error:', err);
-        res.status(500).json({ error: 'Internal Server Error' });
+const authorizeTenantRoute = async (req, res, next) => {
+    const route = req.originalUrl.split('?')[0];
+    if (/^\/api\/(?:v1\/superadmin\/|super-admin\/|admin\/start-migration)/.test(route)) {
+        return req.user.isSuperAdmin ? next() : res.status(403).json({ error: 'Super Admin required.' });
     }
+    if (/^\/api\/user\/(?:workspaces|profile|change-password)(?:\/|$)/.test(route) || /^\/api\/notifications(?:\/|$)/.test(route)) return next();
+    const context = req.tenantContext;
+    if (!context) return res.status(403).json({ error: 'Workspace access denied.' });
+
+    const role = context.role;
+    const isWrite = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+    let permission = 'read';
+    if (/^\/api\/settings\/api-key(?:\/|$)/.test(route)) permission = 'api_keys';
+    else if (/^\/api\/(?:users(?:\/|$)|tenant\/invite(?:\/|$))/.test(route)) permission = 'members';
+    else if (/^\/api\/(?:export\/zip|v1\/activity-logs)(?:\/|$)/.test(route)) permission = 'settings';
+    else if (/^\/api\/inquiries(?:\/|$)/.test(route)) permission = 'content';
+    else if (isWrite && /^\/api\/(?:settings(?:\/|$)|site-settings\/|plugins(?:\/|$))/.test(route)) permission = 'settings';
+    else if (isWrite && route !== '/api/user/upload-avatar') permission = 'content';
+    if (!can(role, permission)) return res.status(403).json({ error: 'Insufficient workspace permissions.' });
+    if (context.elevated) {
+        const recorded = await logActivity(context.tenantId, req.user.userId, req.user.name || req.user.email, 'super_admin', `Shadow access: ${req.method} ${route}`.slice(0, 255), 'attempt');
+        if (!recorded) return res.status(503).json({ error: 'Audit service unavailable.' });
+    }
+    next();
 };
+
+// Mount before subrouters so their handlers cannot bypass tenant authorization.
+app.use('/api', authorizeTenantRoute);
 
 // ========================================================
 // AUTH & API KEY MANAGEMENT (Protected — JWT required)
@@ -1334,18 +1337,6 @@ app.use('/api/settings', authRoutes);
 // ========================================================
 const postCategoryRoutes = require('./routes/postCategoryRoutes');
 app.use('/api/v1/post-categories', postCategoryRoutes);
-
-// Task 5: Apply tenant access validation globally for all /api routes
-// Exempts: user profile, notifications, workspaces (not tenant-scoped)
-app.use('/api', (req, res, next) => {
-    // Skip validation for non-tenant routes
-    const exemptPaths = ['/api/user/', '/api/notifications', '/api/auth/'];
-    if (exemptPaths.some(p => req.originalUrl.startsWith(p))) return next();
-    // Skip for super_admin and co_admin (co_admin has same access as admin within tenant)
-    if (req.user && (req.user.role === 'super_admin')) return next();
-    // Run async validation
-    validateTenantAccess(req, res, next);
-});
 
 // --- Settings ---
 app.get('/api/settings', async (req, res) => {
@@ -1369,7 +1360,7 @@ app.get('/api/settings', async (req, res) => {
         }
         res.json(settings);
     } catch (error) {
-        console.error('[API ERROR] Get Settings:', error);
+        logOperationalError('[API ERROR] Get Settings:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -1380,8 +1371,10 @@ app.put(['/api/settings', '/api/site-settings/:tenantId'], async (req, res) => {
         support_email, 
         logo_url, footer_config, frontend_url 
     } = req.body;
-    // Prefer explicitly passed param, otherwise fallback to jwt
-    const tid = req.params.tenantId ? parseInt(req.params.tenantId) : getTenantId(req);
+    const tid = getTenantId(req);
+    if (req.params.tenantId && parseTenantId(req.params.tenantId) !== tid) {
+        return res.status(403).json({ error: 'Workspace access denied.' });
+    }
     try {
         const globalOptions = JSON.stringify({
             site_name: site_name || '',
@@ -1397,7 +1390,7 @@ app.put(['/api/settings', '/api/site-settings/:tenantId'], async (req, res) => {
         );
         res.json({ message: 'Configuration synchronized successfully' });
     } catch (error) {
-        console.error('[API ERROR] Update Settings:', error);
+        logOperationalError('[API ERROR] Update Settings:', error);
         res.status(500).json({ error: 'Registry write failure' });
     }
 });
@@ -1501,8 +1494,8 @@ app.post('/api/pages', async (req, res) => {
         logActivity(tid, req.user?.userId, req.user?.name || req.user?.email, req.user?.role, `Saved page: ${title.trim()}`, 'success');
         res.status(201).json({ message: 'Page saved successfully', id: pageId });
     } catch (error) {
-        console.error('Save Page Error:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('Save Page Error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -1544,8 +1537,8 @@ app.put('/api/pages/:id', async (req, res) => {
         logActivity(tid, req.user?.userId, req.user?.name || req.user?.email, req.user?.role, `Updated page: ${title.trim()}`, 'success');
         res.json({ message: 'Page updated successfully' });
     } catch (error) {
-        console.error('Update Page Error:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('Update Page Error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -1632,8 +1625,8 @@ app.post('/api/pages/:id/duplicate', async (req, res) => {
         res.status(201).json(newPage);
     } catch (error) {
         await connection.rollback();
-        console.error('[API ERROR] Duplicate Page:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('[API ERROR] Duplicate Page:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     } finally {
         connection.release();
     }
@@ -1669,8 +1662,8 @@ app.patch('/api/pages/:id/status', async (req, res) => {
         console.log(`[TOGGLE] Page ${id} → status: ${status}, is_in_navbar: ${isInNavbar}`);
         res.json({ message: 'Status updated successfully' });
     } catch (error) {
-        console.error('[DATABASE ERROR]:', error);
-        res.status(500).json({ error: error.message });
+        logOperationalError('[DATABASE ERROR]:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -1761,8 +1754,8 @@ app.patch('/api/pages/:id/reorder', async (req, res) => {
         res.json({ message: 'Pages reordered successfully' });
     } catch (error) {
         await connection.rollback();
-        console.error('[API ERROR] Reorder page:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('[API ERROR] Reorder page:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     } finally {
         connection.release();
     }
@@ -1795,19 +1788,26 @@ app.put('/api/layout', async (req, res) => {
 });
 
 // --- Posts ---
+const resolvePostCategoryId = async (rawId, tenantId) => {
+    if (rawId === undefined || rawId === null || rawId === '') return null;
+    const categoryId = parseTenantId(rawId);
+    if (!categoryId) return false;
+    const [categories] = await db.execute('SELECT id FROM post_categories WHERE id = ? AND tenant_id = ? LIMIT 1', [categoryId, tenantId]);
+    return categories.length ? categoryId : false;
+};
 app.get('/api/posts', async (req, res) => {
     try {
         const tid = getTenantId(req);
         const [rows] = await db.execute(
             `SELECT posts.*, post_categories.name AS category_name, post_categories.slug AS category_slug
              FROM posts
-             LEFT JOIN post_categories ON posts.category_id = post_categories.id
+             LEFT JOIN post_categories ON posts.category_id = post_categories.id AND post_categories.tenant_id = posts.tenant_id
              WHERE posts.tenant_id = ?`,
             [tid]
         );
         res.json(rows);
     } catch (error) {
-        console.error('[API ERROR] Get posts:', error);
+        logOperationalError('[API ERROR] Get posts:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -1821,7 +1821,8 @@ app.post('/api/posts', async (req, res) => {
         const jsonContent = typeof sanitized === 'object' ? JSON.stringify(sanitized) : sanitized;
 
         // Resolve category_id: if provided use it, otherwise keep NULL
-        const finalCategoryId = category_id ? parseInt(category_id, 10) : null;
+        const finalCategoryId = await resolvePostCategoryId(category_id, tid);
+        if (finalCategoryId === false) return res.status(400).json({ error: 'Invalid category for this workspace.' });
         // template_type defaults to 'artikel' for backward compatibility
         const finalTemplateType = template_type || 'artikel';
 
@@ -1832,7 +1833,7 @@ app.post('/api/posts', async (req, res) => {
         logActivity(tid, req.user?.userId, req.user?.name || req.user?.email, req.user?.role, `Saved post: ${title}`, 'success');
         res.status(201).json({ message: 'Post created successfully', id: result.insertId });
     } catch (error) {
-        console.error('[API ERROR] Create post:', error);
+        logOperationalError('[API ERROR] Create post:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -1847,7 +1848,8 @@ app.put('/api/posts/:id', async (req, res) => {
         const jsonContent = typeof sanitized === 'object' ? JSON.stringify(sanitized) : sanitized;
 
         // Resolve category_id: if provided use it, otherwise keep NULL
-        const finalCategoryId = category_id ? parseInt(category_id, 10) : null;
+        const finalCategoryId = await resolvePostCategoryId(category_id, tid);
+        if (finalCategoryId === false) return res.status(400).json({ error: 'Invalid category for this workspace.' });
         // template_type defaults to 'artikel' for backward compatibility
         const finalTemplateType = template_type || 'artikel';
 
@@ -1858,7 +1860,7 @@ app.put('/api/posts/:id', async (req, res) => {
         logActivity(tid, req.user?.userId, req.user?.name || req.user?.email, req.user?.role, `Updated post: ${title}`, 'success');
         res.json({ message: 'Post updated successfully' });
     } catch (error) {
-        console.error('[API ERROR] Update post:', error);
+        logOperationalError('[API ERROR] Update post:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -1928,8 +1930,8 @@ app.post('/api/posts/:id/duplicate', async (req, res) => {
 
         res.status(201).json(newPost);
     } catch (error) {
-        console.error('[API ERROR] Duplicate Post:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('[API ERROR] Duplicate Post:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -1955,8 +1957,8 @@ app.patch('/api/posts/:id/status', async (req, res) => {
         console.log('[SUCCESS] Post status updated in DB');
         res.json({ success: true, message: 'Status diperbarui' });
     } catch (error) {
-        console.error('[DATABASE ERROR]:', error);
-        res.status(500).json({ success: false, error: error.message });
+        logOperationalError('[DATABASE ERROR]:', error);
+        res.status(500).json({ success: false, error: 'Internal Server Error' });
     }
 });
 
@@ -1979,7 +1981,7 @@ app.get('/api/media', async (req, res) => {
 
         // Task 1: Silent Sync
         const processingItems = rows.filter(r => r.status === 'processing');
-        if (processingItems.length > 0) {
+        if (processingItems.length > 0 && can(req.tenantContext.role, 'content')) {
             try {
                 const apiKey = process.env.CDN_API_KEY;
                 const axios = require('axios');
@@ -2001,7 +2003,7 @@ app.get('/api/media', async (req, res) => {
                     }
                 }
             } catch (syncErr) {
-                console.error('[SILENT SYNC ERROR]', syncErr.message);
+                logOperationalError('[SILENT SYNC ERROR]', syncErr);
             }
         }
 
@@ -2016,25 +2018,23 @@ app.post('/api/media', upload.single('file'), async (req, res) => {
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
         
         const tid = getTenantId(req);
-        const folder_id = req.body.folder_id ? parseInt(req.body.folder_id) : null;
+        const folder_id = req.body.folder_id ? parseTenantId(req.body.folder_id) : null;
+        if (req.body.folder_id && !folder_id) return res.status(400).json({ error: 'Invalid folder ID.' });
+        if (folder_id) {
+            const [folders] = await db.execute('SELECT id FROM media_folders WHERE id = ? AND tenant_id = ?', [folder_id, tid]);
+            if (!folders.length) return res.status(404).json({ error: 'Folder not found.' });
+        }
         
         // Task 2: Dynamic ProjectName Pathing (Folder Creation)
-        let cdnPath;
-        try {
-            cdnPath = await buildCdnPath(tid, folder_id);
-        } catch (pathErr) {
-            console.error('[MEDIA] Path construction failed:', pathErr);
-            const pid = process.env.CDN_PROJECT_ID || 'kd59zf94';
-            cdnPath = `${pid}/tenant_${tid}`;
-        }
+        const cdnPath = await buildCdnPath(tid, folder_id);
 
         // Wait for CDN response BEFORE attempting to save to MySQL
         let cdnResponse;
         try {
             cdnResponse = await cdnService.upload(req.file.buffer, req.file.originalname, req.file.mimetype, cdnPath);
         } catch (cdnErr) {
-            console.error('[CDN ERROR] Upload failed:', cdnErr.message);
-            return res.status(500).json({ error: 'Failed to upload to Kroombox CDN: ' + cdnErr.message });
+            logOperationalError('[CDN ERROR] Upload failed:', cdnErr);
+            return res.status(502).json({ error: 'Failed to upload to CDN' });
         }
 
         // Task 1 & 4: Capturing fileId and Metadata from CDN Response
@@ -2042,7 +2042,7 @@ app.post('/api/media', upload.single('file'), async (req, res) => {
         
         // Task 1: Validation
         if (!fileId) {
-            console.error('[CDN ERROR] Kroombox returned no fileId! Full response:', cdnResponse);
+            console.error('[CDN ERROR] Upload response contained no file identifier.');
             throw new Error("Failed to capture fileId from CDN");
         }
 
@@ -2053,7 +2053,7 @@ app.post('/api/media', upload.single('file'), async (req, res) => {
         
         // Task 4: Syncing MySQL with CDN Response / File Metadata
         const file_size = cdnResponse.size || req.file.size || 0;
-        const uploaded_by = req.user?.userId || 1;
+        const uploaded_by = req.user.userId;
         const display_name = cdnResponse.originalName || req.file.originalname;
         const status = cdnResponse.status || 'processing';
 
@@ -2064,7 +2064,7 @@ app.post('/api/media', upload.single('file'), async (req, res) => {
                 [tid, fileId, file_url, file_type, file_size, folder_id, uploaded_by, display_name, status]
             );
 
-            console.log(`[MEDIA] ✅ Record Created: ID ${result.insertId} | fileId ${fileId} | folder_id ${folder_id}`);
+            console.log(`[MEDIA] Record created for tenant ${tid}.`);
 
             logActivity(tid, req.user?.userId, req.user?.name || req.user?.email, req.user?.role, `Uploaded media: ${display_name}`, 'success');
 
@@ -2078,8 +2078,8 @@ app.post('/api/media', upload.single('file'), async (req, res) => {
         } catch (dbErr) {
             // Task 3: Database Fallback Log
             console.error('[DATABASE ERROR] MySQL INSERT failed! Asset is in CDN but missing in UI.');
-            console.error(`[CRITICAL] fileId: ${fileId} | tenantId: ${tid} | url: ${file_url}`);
-            console.error('Error Details:', dbErr.message);
+            console.error(`[CRITICAL] Media metadata save failed for tenant ${tid}.`);
+            console.error('Error code:', dbErr.code || 'UNKNOWN');
 
             res.status(201).json({ 
                 success: true, 
@@ -2089,7 +2089,7 @@ app.post('/api/media', upload.single('file'), async (req, res) => {
             });
         }
     } catch (error) {
-        console.error('[MEDIA] ❌ General Upload Error:', error);
+        logOperationalError('[MEDIA] ❌ General Upload Error:', error);
         res.status(500).json({ error: 'Storage synchronization failure' });
     }
 });
@@ -2109,7 +2109,7 @@ app.delete('/api/media/:id', async (req, res) => {
             try {
                 await cdnService.delete(filename);
             } catch(e) { 
-                console.error('CDN delete failed:', e); 
+                logOperationalError('CDN delete failed:', e);
             }
         }
 
@@ -2121,7 +2121,7 @@ app.delete('/api/media/:id', async (req, res) => {
 
         res.json({ message: 'Media asset successfully purged' });
     } catch (error) {
-        console.error('Purge Error:', error);
+        logOperationalError('Purge Error:', error);
         res.status(500).json({ error: 'Internal system purge failure' });
     }
 });
@@ -2156,7 +2156,7 @@ app.post('/api/media/bulk-delete', async (req, res) => {
                 try {
                     await cdnService.delete(filename);
                 } catch (e) {
-                    console.error(`[BULK DELETE] CDN delete failed for ${filename}:`, e.message);
+                    logOperationalError('[BULK DELETE] CDN delete failed:', e);
                 }
             }
 
@@ -2165,8 +2165,8 @@ app.post('/api/media/bulk-delete', async (req, res) => {
             results.deleted++;
         } catch (err) {
             results.failed++;
-            results.errors.push({ id, error: err.message });
-            console.error(`[BULK DELETE] Failed for id ${id}:`, err.message);
+            results.errors.push({ id, error: 'Operation failed' });
+            logOperationalError('[BULK DELETE] Deletion failed:', err);
         }
     }
 
@@ -2224,15 +2224,15 @@ app.post('/api/v1/superadmin/fix-video-urls', async (req, res) => {
                 results.updated++;
                 console.log(`[FIX VIDEO] ID ${row.id} → ${newUrl}`);
             } catch (err) {
-                results.errors.push({ id: row.id, reason: err.message });
+                results.errors.push({ id: row.id, reason: 'Operation failed' });
             }
         }
 
         console.log(`[FIX VIDEO URLS] Updated: ${results.updated} | Skipped: ${results.skipped}`);
         res.json({ message: 'Video URL migration complete', ...results });
     } catch (err) {
-        console.error('[FIX VIDEO URLS] Error:', err);
-        res.status(500).json({ error: 'Migration failed', detail: err.message });
+        logOperationalError('[FIX VIDEO URLS] Error:', err);
+        res.status(500).json({ error: 'Migration failed' });
     }
 });
 
@@ -2252,6 +2252,8 @@ app.get('/api/media/status/:fileId', async (req, res) => {
             return res.json({ status: 'ready', url: rows[0].file_url });
         }
 
+        if (!can(req.tenantContext.role, 'content')) return res.status(403).json({ error: 'Insufficient workspace permissions.' });
+
         // Otherwise check live status from CDN (pass mimeType for URL transformation)
         const statusData = await cdnService.getStatus(fileId, mimeType);
         const newStatus = statusData.status || 'ready';
@@ -2263,7 +2265,7 @@ app.get('/api/media/status/:fileId', async (req, res) => {
         if (newStatus !== rows[0].status) {
             if (newStatus === 'ready') {
                 await db.execute('UPDATE media SET status = ?, file_url = ? WHERE id = ? AND tenant_id = ?', [newStatus, newUrl, mediaId, tid]);
-                console.log(`[MEDIA] ✅ Status updated to 'ready' for fileId ${fileId} | New URL: ${newUrl}`);
+                console.log(`[MEDIA] Status updated for tenant ${tid}.`);
             } else {
                 await db.execute('UPDATE media SET status = ? WHERE id = ? AND tenant_id = ?', [newStatus, mediaId, tid]);
             }
@@ -2271,7 +2273,7 @@ app.get('/api/media/status/:fileId', async (req, res) => {
 
         res.json({ status: newStatus, url: newUrl });
     } catch (error) {
-        console.error('CDN Status Check Error:', error);
+        logOperationalError('CDN Status Check Error:', error);
         res.status(500).json({ error: 'Failed to check CDN status' });
     }
 });
@@ -2284,6 +2286,12 @@ app.patch('/api/media/:id', async (req, res) => {
     if (file_name === undefined && folder_id === undefined) return res.status(400).json({ error: 'No update data provided' });
 
     try {
+        if (folder_id !== undefined && folder_id !== null) {
+            const folderId = parseTenantId(folder_id);
+            if (!folderId) return res.status(400).json({ error: 'Invalid folder ID.' });
+            const [folders] = await db.execute('SELECT id FROM media_folders WHERE id = ? AND tenant_id = ?', [folderId, tid]);
+            if (!folders.length) return res.status(404).json({ error: 'Folder not found.' });
+        }
         let query = 'UPDATE media SET ';
         let params = [];
         if (file_name !== undefined) {
@@ -2305,7 +2313,7 @@ app.patch('/api/media/:id', async (req, res) => {
 
         res.json({ message: 'Media updated successfully' });
     } catch (error) {
-        console.error('Update Error:', error);
+        logOperationalError('Update Error:', error);
         res.status(500).json({ error: 'Internal system update failure' });
     }
 });
@@ -2314,7 +2322,8 @@ app.patch('/api/media/:id', async (req, res) => {
 app.get('/api/folders', async (req, res) => {
     try {
         const tid = getTenantId(req);
-        const folder_id = req.query.folder_id ? parseInt(req.query.folder_id) : null;
+        const folder_id = req.query.folder_id ? parseTenantId(req.query.folder_id) : null;
+        if (req.query.folder_id && !folder_id) return res.status(400).json({ error: 'Invalid folder ID.' });
         
         let rows;
         if (req.query.folder_id !== undefined) {
@@ -2329,7 +2338,7 @@ app.get('/api/folders', async (req, res) => {
         
         res.json(rows);
     } catch (error) {
-        console.error('Fetch Folders Error:', error);
+        logOperationalError('Fetch Folders Error:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2340,6 +2349,12 @@ app.post('/api/folders', async (req, res) => {
         const { name, parent_id } = req.body;
         
         if (!name) return res.status(400).json({ error: 'Folder name is required' });
+        if (parent_id !== undefined && parent_id !== null) {
+            const parentId = parseTenantId(parent_id);
+            if (!parentId) return res.status(400).json({ error: 'Invalid parent folder ID.' });
+            const [parents] = await db.execute('SELECT id FROM media_folders WHERE id = ? AND tenant_id = ?', [parentId, tid]);
+            if (!parents.length) return res.status(404).json({ error: 'Parent folder not found.' });
+        }
         
         const [result] = await db.execute(
             'INSERT INTO media_folders (tenant_id, name, parent_id) VALUES (?, ?, ?)',
@@ -2352,7 +2367,7 @@ app.post('/api/folders', async (req, res) => {
         
         res.status(201).json({ id: result.insertId, name, parent_id });
     } catch (error) {
-        console.error('Create Folder Error:', error);
+        logOperationalError('Create Folder Error:', error);
         res.status(500).json({ error: 'Failed to create folder' });
     }
 });
@@ -2364,6 +2379,12 @@ app.patch('/api/folders/:id', async (req, res) => {
         const { name, parent_id } = req.body;
         
         if (name === undefined && parent_id === undefined) return res.status(400).json({ error: 'No update data provided' });
+        if (parent_id !== undefined && parent_id !== null) {
+            const parentId = parseTenantId(parent_id);
+            if (!parentId || parentId === parseTenantId(id)) return res.status(400).json({ error: 'Invalid parent folder ID.' });
+            const [parents] = await db.execute('SELECT id FROM media_folders WHERE id = ? AND tenant_id = ?', [parentId, tid]);
+            if (!parents.length) return res.status(404).json({ error: 'Parent folder not found.' });
+        }
         
         let query = 'UPDATE media_folders SET ';
         let params = [];
@@ -2383,7 +2404,7 @@ app.patch('/api/folders/:id', async (req, res) => {
         
         res.json({ message: 'Folder updated successfully' });
     } catch (error) {
-        console.error('Update Folder Error:', error);
+        logOperationalError('Update Folder Error:', error);
         res.status(500).json({ error: 'Failed to update folder' });
     }
 });
@@ -2399,7 +2420,7 @@ app.delete('/api/folders/:id', async (req, res) => {
         
         res.json({ message: 'Folder deleted successfully' });
     } catch (error) {
-        console.error('Delete Folder Error:', error);
+        logOperationalError('Delete Folder Error:', error);
         res.status(500).json({ error: 'Failed to delete folder' });
     }
 });
@@ -2418,7 +2439,7 @@ app.get('/api/v1/activity-logs', authenticateToken, async (req, res) => {
         );
         res.json(logs);
     } catch (error) {
-        console.error('[API ERROR] Get activity logs:', error);
+        logOperationalError('[API ERROR] Get activity logs:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2427,7 +2448,7 @@ app.get('/api/v1/activity-logs', authenticateToken, async (req, res) => {
 app.get('/api/dashboard/stats', async (req, res) => {
     try {
         const tid = getTenantId(req);
-        const [userRows] = await db.execute('SELECT COUNT(*) as total FROM users');
+        const [userRows] = await db.execute("SELECT COUNT(*) as total FROM tenant_users WHERE tenant_id = ? AND status = 'active'", [tid]);
         
         let totalInquiries = 0;
         if (tid) {
@@ -2437,7 +2458,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
 
         res.json({ totalUsers: userRows[0].total, totalInquiries });
     } catch (error) {
-        console.error('[API ERROR] Get Dashboard Stats:', error);
+        logOperationalError('[API ERROR] Get Dashboard Stats:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2509,7 +2530,7 @@ app.get('/api/v1/dashboard/charts', async (req, res) => {
             contentDistribution
         });
     } catch (error) {
-        console.error('[API ERROR] Get Dashboard Charts:', error);
+        logOperationalError('[API ERROR] Get Dashboard Charts:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2530,7 +2551,7 @@ app.get('/api/users', async (req, res) => {
         `, [tid]);
         res.json(rows);
     } catch (error) {
-        console.error('[API ERROR] Get tenant users:', error);
+        logOperationalError('[API ERROR] Get tenant users:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2545,7 +2566,11 @@ app.post('/api/tenant/invite', async (req, res) => {
         return res.status(400).json({ error: 'Email wajib diisi.' });
     }
     const validRoles = ['admin', 'co_admin', 'content_creative', 'guest'];
-    const finalRole = validRoles.includes(role) ? role : 'guest';
+    if (!validRoles.includes(role)) return res.status(400).json({ error: 'Role undangan tidak valid.' });
+    if (['admin', 'co_admin'].includes(role) && !can(req.tenantContext.role, 'assign_admin')) {
+        return res.status(403).json({ error: 'Anda tidak dapat memberikan role tersebut.' });
+    }
+    const finalRole = role;
 
     try {
         // 1. Check if user exists
@@ -2576,10 +2601,11 @@ app.post('/api/tenant/invite', async (req, res) => {
         const tenantName = tenantRows.length > 0 ? tenantRows[0].name : 'Tenant';
 
         // 5. Insert tenant_users with status 'pending'
-        await db.execute(
-            "INSERT INTO tenant_users (tenant_id, user_id, role, status) VALUES (?, ?, ?, 'pending')",
-            [tid, targetUser.id, finalRole]
-        );
+        if (existing.length > 0) {
+            await db.execute("UPDATE tenant_users SET role = ?, status = 'pending' WHERE tenant_id = ? AND user_id = ?", [finalRole, tid, targetUser.id]);
+        } else {
+            await db.execute("INSERT INTO tenant_users (tenant_id, user_id, role, status) VALUES (?, ?, ?, 'pending')", [tid, targetUser.id, finalRole]);
+        }
 
         // 6. Create notification for the invited user
         const roleLabel = finalRole === 'admin' ? 'Admin' : finalRole === 'co_admin' ? 'Co-Admin' : finalRole === 'content_creative' ? 'Content Creative' : 'Guest';
@@ -2589,28 +2615,54 @@ app.post('/api/tenant/invite', async (req, res) => {
             [targetUser.id, tid, notifMessage]
         );
 
-        console.log(`[INVITE] User ${email} invited to tenant ${tid} as ${finalRole}`);
+        console.log(`[INVITE] Invitation created for tenant ${tid}.`);
         res.status(201).json({ message: `Undangan berhasil dikirim ke ${email}.` });
     } catch (error) {
-        console.error('[API ERROR] Invite user:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('[API ERROR] Invite user:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
 app.delete('/api/users/:user_id', async (req, res) => {
-    const { user_id } = req.params;
+    const userId = parseTenantId(req.params.user_id);
     const tid = getTenantId(req);
-    
-    // Protect Admin from Deletion by Co-Admin
-    if (req.user && req.user.role === 'co_admin') {
-        return res.status(403).json({ error: 'Akses Terbatas: Hanya Admin utama yang dapat menghapus anggota tim.' });
-    }
-
+    if (!userId) return res.status(400).json({ error: 'ID pengguna tidak valid.' });
+    let connection;
     try {
-        await db.execute('DELETE FROM tenant_users WHERE user_id = ? AND tenant_id = ?', [user_id, tid]);
+        connection = await db.getConnection();
+        await connection.beginTransaction();
+        const [members] = await connection.execute(
+            'SELECT role, status FROM tenant_users WHERE tenant_id = ? AND user_id = ? FOR UPDATE',
+            [tid, userId]
+        );
+        if (!members.length) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'Anggota tidak ditemukan.' });
+        }
+        const targetRole = members[0].role;
+        if (['admin', 'co_admin'].includes(targetRole) && !can(req.tenantContext.role, 'remove_admin')) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Anda tidak dapat menghapus anggota dengan role tersebut.' });
+        }
+        if (targetRole === 'admin' && members[0].status === 'active') {
+            const [admins] = await connection.execute(
+                "SELECT user_id FROM tenant_users WHERE tenant_id = ? AND role = 'admin' AND status = 'active' FOR UPDATE",
+                [tid]
+            );
+            if (admins.length <= 1) {
+                await connection.rollback();
+                return res.status(409).json({ error: 'Admin aktif terakhir tidak dapat dihapus.' });
+            }
+        }
+        await connection.execute('DELETE FROM tenant_users WHERE user_id = ? AND tenant_id = ?', [userId, tid]);
+        await connection.commit();
         res.json({ message: 'User removed successfully' });
     } catch (error) {
+        if (connection) await connection.rollback();
+        logOperationalError('[API ERROR] Remove tenant member:', error);
         res.status(500).json({ error: 'Internal Server Error' });
+    } finally {
+        if (connection) connection.release();
     }
 });
 
@@ -2618,11 +2670,9 @@ app.delete('/api/users/:user_id', async (req, res) => {
 app.get('/api/user/workspaces', async (req, res) => {
     try {
         const userId = req.user.userId;
-        const userRole = req.user.role;
-
         // Super Admin Shadow Mode: return ALL tenants as accessible workspaces
         // This prevents the frontend tenant guard from triggering eviction
-        if (userRole === 'super_admin') {
+        if (req.user.isSuperAdmin === true) {
             const [allTenants] = await db.execute(`
                 SELECT t.id as tenant_id, t.name as tenant_name, t.subdomain, 'admin' as role, 'active' as status
                 FROM tenants t
@@ -2642,7 +2692,7 @@ app.get('/api/user/workspaces', async (req, res) => {
             SELECT tu.tenant_id, t.name as tenant_name, t.subdomain, tu.role, tu.status
             FROM tenant_users tu
             JOIN tenants t ON tu.tenant_id = t.id
-            WHERE tu.user_id = ? AND tu.status = 'active'
+            WHERE tu.user_id = ? AND tu.status = 'active' AND t.status = 'active'
             ORDER BY tu.role ASC, t.name ASC
         `, [userId]);
 
@@ -2653,7 +2703,7 @@ app.get('/api/user/workspaces', async (req, res) => {
         }));
         res.json(annotated);
     } catch (error) {
-        console.error('[API ERROR] Get user workspaces:', error);
+        logOperationalError('[API ERROR] Get user workspaces:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2672,7 +2722,7 @@ app.get('/api/notifications', async (req, res) => {
         );
         res.json(notifications);
     } catch (error) {
-        console.error('[API ERROR] Get notifications:', error);
+        logOperationalError('[API ERROR] Get notifications:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2687,7 +2737,7 @@ app.get('/api/notifications/latest-alert', async (req, res) => {
         );
         res.json(alerts.length > 0 ? alerts[0] : null);
     } catch (error) {
-        console.error('[API ERROR] Get latest alert:', error);
+        logOperationalError('[API ERROR] Get latest alert:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2702,7 +2752,7 @@ app.patch('/api/notifications/:id/read', async (req, res) => {
         );
         res.json({ message: 'Notification marked as read.' });
     } catch (error) {
-        console.error('[API ERROR] Mark notification read:', error);
+        logOperationalError('[API ERROR] Mark notification read:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2733,7 +2783,12 @@ app.post('/api/notifications/respond', async (req, res) => {
             return res.status(400).json({ error: 'Data undangan tidak valid (tenant_id missing).' });
         }
 
+        const [pending] = await db.execute("SELECT user_id FROM tenant_users WHERE tenant_id = ? AND user_id = ? AND status = 'pending'", [tenantId, userId]);
+        if (!pending.length) return res.status(409).json({ error: 'Undangan sudah tidak berlaku.' });
+
         if (action === 'accept') {
+            const [activeTenants] = await db.execute("SELECT id FROM tenants WHERE id = ? AND status = 'active'", [tenantId]);
+            if (!activeTenants.length) return res.status(403).json({ error: 'Undangan tidak lagi dapat diterima.' });
             // Update tenant_users status to 'active'
             await db.execute(
                 "UPDATE tenant_users SET status = 'active' WHERE tenant_id = ? AND user_id = ?",
@@ -2749,7 +2804,7 @@ app.post('/api/notifications/respond', async (req, res) => {
         } else {
             // Reject: delete the tenant_users record
             await db.execute(
-                'DELETE FROM tenant_users WHERE tenant_id = ? AND user_id = ?',
+                "DELETE FROM tenant_users WHERE tenant_id = ? AND user_id = ? AND status = 'pending'",
                 [tenantId, userId]
             );
             // Update notification
@@ -2761,8 +2816,8 @@ app.post('/api/notifications/respond', async (req, res) => {
             res.json({ message: 'Undangan ditolak.' });
         }
     } catch (error) {
-        console.error('[API ERROR] Respond to notification:', error);
-        res.status(500).json({ error: 'Internal Server Error', detail: error.message });
+        logOperationalError('[API ERROR] Respond to notification:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -2770,8 +2825,7 @@ app.post('/api/notifications/respond', async (req, res) => {
 app.get('/api/user/profile', async (req, res) => {
     try {
         const userId = req.user.userId;
-        const override = req.headers['x-active-tenant'];
-        const tid = override ? parseInt(override, 10) : req.user.tenant_id;
+        const tid = req.tenantContext?.tenantId || null;
 
         const [rows] = await db.execute('SELECT id, name, email, recipient_email, profile_picture_url FROM users WHERE id = ?', [userId]);
         if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
@@ -2784,7 +2838,7 @@ app.get('/api/user/profile', async (req, res) => {
             role: req.user.role
         });
     } catch (error) {
-        console.error('[PROFILE ERROR] Get profile:', error);
+        logOperationalError('[PROFILE ERROR] Get profile:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -2797,7 +2851,7 @@ app.put('/api/user/profile', async (req, res) => {
         await db.execute('UPDATE users SET name = ?, recipient_email = ? WHERE id = ?', [name, finalRecipientEmail, userId]);
         res.json({ message: 'Profil diperbarui' });
     } catch (error) {
-        console.error('[PROFILE ERROR] Update profile:', error);
+        logOperationalError('[PROFILE ERROR] Update profile:', error);
         res.status(500).json({ error: 'Gagal memperbarui profil' });
     }
 });
@@ -2816,13 +2870,13 @@ app.post('/api/user/upload-avatar', upload.single('avatar'), async (req, res) =>
         try {
             cdnResponse = await cdnService.upload(req.file.buffer, req.file.originalname, req.file.mimetype, cdnPath);
         } catch (cdnErr) {
-            console.error('[AVATAR] ❌ CDN upload failed:', cdnErr.message);
+            logOperationalError('[AVATAR] CDN upload failed:', cdnErr);
             return res.status(500).json({ error: 'Failed to upload avatar to CDN' });
         }
 
         const fileId = cdnResponse.fileId;
         if (!fileId) {
-            console.error('[AVATAR] ❌ CRITICAL: CDN returned no fileId!', cdnResponse);
+            console.error('[AVATAR] CDN returned no file identifier.');
             return res.status(500).json({ error: 'CDN returned no file identifier' });
         }
 
@@ -2841,7 +2895,7 @@ app.post('/api/user/upload-avatar', upload.single('avatar'), async (req, res) =>
                     rawUrl = statusData.url;
                 }
             } catch (err) {
-                console.error('[AVATAR] Error polling status:', err.message);
+                logOperationalError('[AVATAR] Error polling status:', err);
             }
             attempts++;
         }
@@ -2868,14 +2922,21 @@ app.post('/api/user/upload-avatar', upload.single('avatar'), async (req, res) =>
         console.log(`[AVATAR] ✅ User ${userId} avatar saved → ${finalUrl}`);
         return res.json({ url: finalUrl, status: 'ready' });
     } catch (error) {
-        console.error('[PROFILE ERROR] Upload avatar:', error);
+        logOperationalError('[PROFILE ERROR] Upload avatar:', error);
         res.status(500).json({ error: 'Gagal mengunggah foto profil' });
     }
 });
 
-app.put('/api/user/change-password', async (req, res) => {
+const profilePasswordLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'Terlalu banyak percobaan. Coba lagi nanti.' }
+});
+app.put('/api/user/change-password', profilePasswordLimiter, async (req, res) => {
     const { currentPassword, newPassword } = req.body;
     const userId = req.user.userId;
+    if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128) {
+        return res.status(400).json({ error: 'Password baru harus berisi 12–128 karakter.' });
+    }
     try {
         const [users] = await db.execute('SELECT password_hash FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
@@ -2887,7 +2948,7 @@ app.put('/api/user/change-password', async (req, res) => {
         await db.execute('UPDATE users SET password_hash = ? WHERE id = ?', [hashedNewPassword, userId]);
         res.json({ message: 'Kata sandi berhasil diubah' });
     } catch (error) {
-        console.error('[PROFILE ERROR] Change password:', error);
+        logOperationalError('[PROFILE ERROR] Change password:', error);
         res.status(500).json({ error: 'Gagal mengubah kata sandi' });
     }
 });
@@ -2948,7 +3009,7 @@ app.get('/api/export/zip', async (req, res) => {
                     return `./assets/media/${filename}`;
                 }
             } catch (e) {
-                console.error(`[EXPORT] Error processing image: ${url}`, e);
+                logOperationalError('[EXPORT] Error processing image:', e);
             }
             return url;
         };
@@ -3161,7 +3222,7 @@ function PageLoader() {
     import(\`./data/pages/\${slug}.json\`)
       .then(m => setData(m.default))
       .catch((err) => {
-        console.error('Failed to load page:', err);
+        logOperationalError('Failed to load page:', err);
         setError(true);
       });
   }, [slug]);
@@ -3275,9 +3336,9 @@ export default function App() {
         console.log(`[EXPORT] ZIP export completed for tenant: ${tid}`);
 
     } catch (error) {
-        console.error('[EXPORT ERROR]:', error);
+        logOperationalError('[EXPORT ERROR]:', error);
         if (!res.headersSent) {
-            res.status(500).json({ error: 'Export failed', detail: error.message });
+            res.status(500).json({ error: 'Export failed' });
         }
     }
 });
@@ -3324,7 +3385,7 @@ app.get('/api/inquiries', async (req, res) => {
         );
         res.json(rows);
     } catch (error) {
-        console.error('[API ERROR] Get inquiries:', error);
+        logOperationalError('[API ERROR] Get inquiries:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -3339,7 +3400,7 @@ app.get('/api/inquiries/count', async (req, res) => {
         );
         res.json({ unread: rows[0].unread });
     } catch (error) {
-        console.error('[API ERROR] Get inquiry count:', error);
+        logOperationalError('[API ERROR] Get inquiry count:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -3354,7 +3415,7 @@ app.patch('/api/inquiries/:id/read', async (req, res) => {
         );
         res.json({ success: true });
     } catch (error) {
-        console.error('[API ERROR] Mark inquiry read:', error);
+        logOperationalError('[API ERROR] Mark inquiry read:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -3369,7 +3430,7 @@ app.delete('/api/inquiries/:id', async (req, res) => {
         );
         res.json({ success: true });
     } catch (error) {
-        console.error('[API ERROR] Delete inquiry:', error);
+        logOperationalError('[API ERROR] Delete inquiry:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -3389,7 +3450,7 @@ app.post('/api/inquiries/bulk-delete', async (req, res) => {
         );
         res.json({ success: true, deleted: ids.length });
     } catch (error) {
-        console.error('[API ERROR] Bulk delete inquiries:', error);
+        logOperationalError('[API ERROR] Bulk delete inquiries:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -3428,7 +3489,7 @@ app.get('/api/comments', async (req, res) => {
         const [rows] = await db.execute(query, params);
         res.json(rows);
     } catch (error) {
-        console.error('[API ERROR] Get comments:', error);
+        logOperationalError('[API ERROR] Get comments:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -3443,7 +3504,7 @@ app.get('/api/comments/count', async (req, res) => {
         );
         res.json({ pending: rows[0].pending });
     } catch (error) {
-        console.error('[API ERROR] Get comment count:', error);
+        logOperationalError('[API ERROR] Get comment count:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -3463,7 +3524,7 @@ app.patch('/api/comments/:id/status', async (req, res) => {
         );
         res.json({ success: true, status });
     } catch (error) {
-        console.error('[API ERROR] Update comment status:', error);
+        logOperationalError('[API ERROR] Update comment status:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -3478,7 +3539,7 @@ app.delete('/api/comments/:id', async (req, res) => {
         );
         res.json({ success: true });
     } catch (error) {
-        console.error('[API ERROR] Delete comment:', error);
+        logOperationalError('[API ERROR] Delete comment:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -3489,7 +3550,11 @@ app.use((req, res) => {
     res.status(404).send('Route not found');
 });
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+    const PORT = process.env.PORT || 8080;
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}
+
+module.exports = app;

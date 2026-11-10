@@ -28,8 +28,7 @@ router.get('/', async (req, res) => {
     } catch (error) {
         healthStatus.status = 'DEGRADED';
         healthStatus.database = 'DISCONNECTED';
-        healthStatus.error = error.message;
-        console.error('[HEALTH] Database check failed:', error.message);
+        console.error('[HEALTH] Database check failed:', error.code || 'UNKNOWN');
         return res.status(503).json(healthStatus);
     }
 

@@ -30,6 +30,7 @@ test('database connection uses only supplied runtime DB variables and rejects in
         console: { log() {}, error() {} },
         require(name) {
             if (name === 'dotenv') return { config() {} };
+            if (name === 'node:net') return require('node:net');
             if (name === 'mysql2/promise') return { createPool(config) {
                 poolConfig = config;
                 return { getConnection: async () => ({ release() {} }) };
@@ -46,4 +47,11 @@ test('database connection uses only supplied runtime DB variables and rejects in
     assert.equal(poolConfig.user, 'dev');
     assert.equal(poolConfig.password, 'test-only');
     assert.equal(poolConfig.database, 'cms_dev');
+    assert.equal(poolConfig.ssl.rejectUnauthorized, true);
+    load({ DB_HOST: 'mysql', DB_PORT: '3306', DB_USER: 'dev', DB_PASSWORD: 'test-only', DB_NAME: 'cms_dev' });
+    assert.equal(poolConfig.ssl, undefined);
+    load({ DB_HOST: 'remote.example.test', DB_PORT: '3306', DB_USER: 'dev', DB_PASSWORD: 'test-only', DB_NAME: 'cms_dev', DB_SSL_MODE: 'verify', DB_SSL_CA: 'test-ca' });
+    assert.equal(poolConfig.ssl.rejectUnauthorized, true);
+    assert.equal(poolConfig.ssl.ca, 'test-ca');
+    assert.throws(() => load({ DB_HOST: 'remote.example.test', DB_PORT: '3306', DB_USER: 'dev', DB_PASSWORD: 'test-only', DB_NAME: 'cms_dev', DB_SSL_MODE: 'insecure' }), /DB_SSL_MODE/);
 });

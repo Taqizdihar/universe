@@ -130,11 +130,11 @@ const sendInquiryNotification = async (adminEmail, inquiryData) => {
 
     try {
         const info = await mailer.sendMail(mailOptions);
-        console.log(`[EMAIL] ✓ Sent via SMTP to: ${adminEmail} (ID: ${info.messageId})`);
+        console.log('[EMAIL] Message sent via SMTP.');
         return { success: true, messageId: info.messageId };
     } catch (err) {
-        console.error(`[EMAIL] ✗ Failed to send via SMTP to ${adminEmail}:`, err.message);
-        return { success: false, reason: err.message };
+        console.error('[EMAIL] SMTP delivery failed:', err.code || err.name || 'UNKNOWN');
+        return { success: false, reason: 'SMTP delivery failed' };
     }
 };
 
@@ -152,7 +152,7 @@ const sendSuperAdminVerificationCode = async (adminEmail, code, purpose) => {
         });
         return true;
     } catch (error) {
-        console.error('[EMAIL] Failed to send super admin verification code:', error.message);
+        console.error('[EMAIL] Failed to send super admin verification code:', error.code || error.name || 'UNKNOWN');
         return false;
     }
 };

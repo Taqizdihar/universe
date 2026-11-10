@@ -128,8 +128,7 @@ const cdnService = {
         formData.append('projectId', projectId);
       }
 
-      console.log(`[CDN] ▶ Uploading "${originalName}" (${mimeType}, ${fileBuffer.length} bytes)`);
-      console.log(`[CDN]   projectName: "${projectName}"${projectId ? `, projectId: "${projectId}"` : ''}`);
+      console.log(`[CDN] Upload started (${mimeType}, ${fileBuffer.length} bytes)`);
 
       const response = await axios.post(`${CDN_BASE_URL}/upload`, formData, {
         headers: {
@@ -142,20 +141,17 @@ const cdnService = {
 
       const data = response.data;
 
-      // Task 5: Full response logging for debugging
-      console.log(`[CDN] ✅ Kroombox Response:`, JSON.stringify(data, null, 2));
-
       const fileId = data.fileId || data.id;
 
       if (!fileId) {
-        console.error('[CDN] ❌ CRITICAL: Kroombox returned no fileId! Full response:', data);
+        console.error('[CDN] Upload response contained no file identifier.');
         throw new Error('CDN returned no file identifier');
       }
 
       // Smart URL resolution — transforms to viewable preview URL
       const resolvedUrl = resolveFileUrl(data, mimeType);
 
-      console.log(`[CDN] 🔗 Resolved viewable URL: ${resolvedUrl}`);
+      console.log('[CDN] Upload completed.');
 
       return {
         fileId,
@@ -166,15 +162,8 @@ const cdnService = {
         originalName: data.originalName || data.fileName || originalName,
       };
     } catch (error) {
-      // Task 5: Detailed error logging
-      console.error('[CDN] ❌ Upload FAILED for:', originalName);
-      console.error('[CDN]   Status:', error.response?.status || 'N/A');
-      console.error('[CDN]   Response Body:', JSON.stringify(error.response?.data || {}, null, 2));
-      console.error('[CDN]   Message:', error.message);
-
-      throw new Error(
-        error.response?.data?.message || error.response?.data?.error || 'Failed to upload to CDN'
-      );
+      console.error('[CDN] Upload failed.', { status: error.response?.status || null, code: error.code || null });
+      throw new Error('Failed to upload to CDN');
     }
   },
 
@@ -187,18 +176,16 @@ const cdnService = {
       const apiKey = process.env.CDN_API_KEY;
       if (!apiKey) throw new Error('CDN_API_KEY is not configured');
 
-      console.log(`[CDN] 🗑 Deleting file: ${fileId}`);
-
       const response = await axios.delete(`${CDN_BASE_URL}/files/${fileId}`, {
         headers: {
           'x-api-key': apiKey,
         },
       });
 
-      console.log(`[CDN] ✅ Deleted:`, JSON.stringify(response.data));
+      console.log('[CDN] Delete completed.');
       return response.data;
     } catch (error) {
-      console.error('[CDN] ❌ Delete FAILED:', error.response?.data || error.message);
+      console.error('[CDN] Delete failed.', { status: error.response?.status || null, code: error.code || null });
       throw new Error('Failed to delete from CDN');
     }
   },
@@ -233,7 +220,7 @@ const cdnService = {
               result = JSON.parse(event.substring(6));
               break;
             } catch (err) {
-              console.error('[CDN] Failed to parse SSE chunk:', event);
+              console.error('[CDN] Failed to parse SSE chunk.');
             }
           }
         }
@@ -251,18 +238,18 @@ const cdnService = {
             const detail = detailRes.data;
             physicalUrl = detail.url || detail.webContentLink || detail.directUrl;
           } catch(detailErr) {
-            console.error('[CDN] Failed to fetch full details for physical URL, using stream fallback:', detailErr.message);
+            console.error('[CDN] Failed to fetch full details for physical URL, using stream fallback:', detailErr.code || 'UNKNOWN');
           }
         }
         
         // Transform to viewable URL instead of download URL
         result.url = transformToViewableUrl(physicalUrl, mimeType || '', fileId);
-        console.log(`[CDN] 🔗 Status ready — transformed URL: ${result.url}`);
+        console.log('[CDN] Status ready.');
       }
 
       return result;
     } catch (error) {
-      console.error('[CDN] Status Check Error:', error.response?.data || error.message);
+      console.error('[CDN] Status Check Error:', { status: error.response?.status || null, code: error.code || null });
       return { status: 'unknown' };
     }
   }

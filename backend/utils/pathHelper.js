@@ -23,30 +23,23 @@ function sanitizeFolderName(name) {
  * 
  * @param {number} tenantId - The tenant ID
  * @param {number|null} folderId - The CMS media_folders.id (null = root)
- * @returns {Promise<string>} e.g. "kd59zf94/tenant_9/Aset_Promosi"
+ * @returns {Promise<string>} e.g. "project-id/tenant_9/Aset_Promosi"
  */
 async function buildCdnPath(tenantId, folderId) {
-  const projectId = process.env.CDN_PROJECT_ID || 'kd59zf94';
+  const projectId = process.env.CDN_PROJECT_ID;
+  if (!projectId) throw new Error('CDN_PROJECT_ID is required for uploads.');
   let path = `${projectId}/tenant_${tenantId}`;
 
   if (folderId) {
-    try {
-      const [rows] = await db.execute(
-        'SELECT name FROM media_folders WHERE id = ?',
-        [folderId]
-      );
-      
-      if (rows.length > 0) {
-        // Task 2: Append sub-folder name with a slash
-        const folderName = sanitizeFolderName(rows[0].name);
-        path += `/${folderName}`;
-      }
-    } catch (err) {
-      console.error('[PATH] Error fetching folder name:', err);
-    }
+    const [rows] = await db.execute(
+      'SELECT name FROM media_folders WHERE id = ? AND tenant_id = ?',
+      [folderId, tenantId]
+    );
+    if (!rows.length) throw new Error('Folder not found in the active workspace.');
+    const folderName = sanitizeFolderName(rows[0].name);
+    path += `/${folderName}`;
   }
 
-  console.log(`[PATH] Final projectName (CDN Path): ${path}`);
   return path;
 }
 

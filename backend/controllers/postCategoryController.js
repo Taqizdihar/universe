@@ -17,14 +17,7 @@ const db = require('../server/lib/db');
  * Resolves the active tenant ID from the request.
  * Supports workspace switching via X-Active-Tenant header.
  */
-const getTenantId = (req) => {
-    const override = req.headers['x-active-tenant'];
-    if (override) {
-        const parsed = parseInt(override, 10);
-        if (!isNaN(parsed) && parsed > 0) return parsed;
-    }
-    return req.user.tenant_id;
-};
+const getTenantId = (req) => req.tenantContext.tenantId;
 
 // =============================================================
 // GET — Fetch all categories for the active tenant
@@ -38,7 +31,7 @@ const getAllCategories = async (req, res) => {
         );
         res.json(rows);
     } catch (error) {
-        console.error('[API ERROR] Get post categories:', error);
+        console.error('[API ERROR] Get post categories:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 };
@@ -88,7 +81,7 @@ const createCategory = async (req, res) => {
             slug: finalSlug
         });
     } catch (error) {
-        console.error('[API ERROR] Create post category:', error);
+        console.error('[API ERROR] Create post category:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 };
@@ -138,7 +131,7 @@ const updateCategory = async (req, res) => {
 
         res.json({ message: 'Category updated successfully' });
     } catch (error) {
-        console.error('[API ERROR] Update post category:', error);
+        console.error('[API ERROR] Update post category:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 };
@@ -173,7 +166,7 @@ const deleteCategory = async (req, res) => {
 
         res.json({ message: 'Category deleted successfully' });
     } catch (error) {
-        console.error('[API ERROR] Delete post category:', error);
+        console.error('[API ERROR] Delete post category:', error.code || error.name || 'UNKNOWN');
         res.status(500).json({ error: 'Internal Server Error' });
     }
 };
