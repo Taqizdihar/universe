@@ -4,7 +4,9 @@ const rateLimit = require('express-rate-limit');
 
 const cors = require('cors');
 require('dotenv').config();
-const { sendInquiryNotification } = require('./services/emailService');
+const { sendInquiryNotification, sendSuperAdminVerificationCode } = require('./services/emailService');
+const { SUPER_ADMIN_EMAIL } = require('./config/superAdmin');
+const { normalizeEmail, hasGlobalSuperAdminRole, credentialVersion, verificationCodeHash, constantTimeHexEqual } = require('./utils/superAdminAuth');
 const { logActivity } = require('./services/loggerService');
 const JWT_SECRET = process.env.JWT_SECRET || 'uni-inside-secret-key-2026';
 if (!process.env.JWT_SECRET) {
@@ -13,6 +15,7 @@ if (!process.env.JWT_SECRET) {
 const db = require('./server/lib/db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -50,7 +53,7 @@ app.use(express.json());
 
 // Verbose Request Logging
 app.use((req, res, next) => {
-    console.log(`[REQUEST] ${req.method} ${req.path}`, req.body && Object.keys(req.body).length ? req.body : '');
+    console.log(`[REQUEST] ${req.method} ${req.path}`);
     next();
 });
 
@@ -268,25 +271,31 @@ const authenticateToken = async (req, res, next) => {
             }
         }
         
-        const [userCheck] = await db.execute('SELECT name, email FROM users WHERE id = ?', [user.userId]);
-        if (userCheck.length > 0) {
-            user.name = userCheck[0].name;
-            user.email = userCheck[0].email;
-        }
-        const isSuperAdmin = user.userId === 1 || (userCheck.length > 0 && userCheck[0].email === 'm.taqizdihar@gmail.com');
+        const [userCheck] = await db.execute('SELECT name, email, password_hash FROM users WHERE id = ?', [user.userId]);
+        if (userCheck.length === 0) return res.status(401).json({ error: 'Unauthorized' });
+        user.name = userCheck[0].name;
+        user.email = userCheck[0].email;
+        user.isSuperAdmin = false;
+        const isSuperAdmin = await hasGlobalSuperAdminRole(db, user.userId, user.email);
         
         if (isSuperAdmin) {
+            if (!process.env.JWT_SECRET || !constantTimeHexEqual(user.credential_version, credentialVersion(userCheck[0].password_hash, JWT_SECRET))) {
+                return res.status(401).json({ error: 'Sesi Super Admin kedaluwarsa. Silakan masuk kembali.' });
+            }
             user.role = 'super_admin';
+            user.isSuperAdmin = true;
         } else if (activeTenantId) {
             const [membership] = await db.execute(
                 "SELECT role FROM tenant_users WHERE tenant_id = ? AND user_id = ? AND status = 'active'",
                 [activeTenantId, user.userId]
             );
             if (membership.length > 0) {
-                user.role = membership[0].role;
+                user.role = membership[0].role === 'super_admin' ? 'guest' : membership[0].role;
             } else {
                 user.role = 'guest';
             }
+        } else {
+            user.role = 'guest';
         }
         
         req.user = user;
@@ -307,9 +316,9 @@ const authenticateToken = async (req, res, next) => {
     }
 };
 
-// Super Admin Middleware (Strict check for user_id === 1)
+// Super Admin Middleware: role and fixed mailbox are verified against the DB on every request.
 const verifySuperAdmin = (req, res, next) => {
-    if (req.user && req.user.userId === 1) {
+    if (req.user && req.user.isSuperAdmin === true) {
         return next();
     }
     return res.status(403).json({ error: 'Access Denied: Super Admin privileges required.' });
@@ -483,6 +492,9 @@ app.put('/api/v1/superadmin/tenants/:tenantId/admins/:adminId/password', authent
             [tenantId, adminId]
         );
         if (admins.length === 0) return res.status(404).json({ error: 'Admin aktif tidak ditemukan pada tenant ini.' });
+        if (await hasGlobalSuperAdminRole(db, adminId, admins[0].email)) {
+            return res.status(403).json({ error: 'Password Super Admin hanya dapat dipulihkan melalui verifikasi email.' });
+        }
 
         const passwordHash = await bcrypt.hash(newPassword, 10);
         await db.execute('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, adminId]);
@@ -713,14 +725,147 @@ app.get('/api/admin/start-migration', authenticateToken, verifySuperAdmin, async
 });
 
 
+const superAdminCodeLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: 'Terlalu banyak permintaan. Coba lagi nanti.' }
+});
+const superAdminCompleteLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 15,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: 'Terlalu banyak percobaan. Coba lagi nanti.' }
+});
+
+// Both initial enrollment and account recovery require possession of the
+// fixed mailbox. The bootstrap path never trusts a user ID or a JWT role.
+app.post('/api/auth/super-admin/request-code', superAdminCodeLimiter, async (req, res) => {
+    const email = normalizeEmail(req.body?.email);
+    const sentMessage = { message: 'Jika alamat terdaftar sebagai Super Admin, kode verifikasi akan dikirim.' };
+    if (email !== SUPER_ADMIN_EMAIL) return res.json(sentMessage);
+    if (!process.env.JWT_SECRET) return res.status(503).json({ error: 'Konfigurasi keamanan server belum lengkap.' });
+
+    try {
+        const [roles] = await db.execute(
+            "SELECT u.email FROM user_global_roles ugr JOIN users u ON u.id = ugr.user_id WHERE ugr.role = 'super_admin' LIMIT 2"
+        );
+        if (roles.length > 1 || (roles.length === 1 && normalizeEmail(roles[0].email) !== SUPER_ADMIN_EMAIL)) {
+            return res.json(sentMessage);
+        }
+        const [recent] = await db.execute(
+            'SELECT id FROM super_admin_verifications WHERE email = ? AND created_at > NOW() - INTERVAL 60 SECOND ORDER BY id DESC LIMIT 1',
+            [email]
+        );
+        if (recent.length > 0) return res.json(sentMessage);
+
+        const purpose = roles.length === 0 ? 'bootstrap' : 'recovery';
+        const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+        const codeHash = verificationCodeHash(email, purpose, code, JWT_SECRET);
+        const [challenge] = await db.execute(
+            'INSERT INTO super_admin_verifications (email, code_hash, purpose, expires_at) VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE))',
+            [email, codeHash, purpose]
+        );
+        if (!await sendSuperAdminVerificationCode(email, code, purpose)) {
+            await db.execute('DELETE FROM super_admin_verifications WHERE id = ?', [challenge.insertId]);
+            return res.status(503).json({ error: 'Email verifikasi belum dapat dikirim. Periksa konfigurasi SMTP.' });
+        }
+        return res.json(sentMessage);
+    } catch (error) {
+        console.error('[SUPER ADMIN] Verification request failed:', error);
+        return res.status(500).json({ error: 'Gagal meminta kode verifikasi.' });
+    }
+});
+
+app.post('/api/auth/super-admin/complete', superAdminCompleteLimiter, async (req, res) => {
+    const { code, name, newPassword, confirmPassword } = req.body || {};
+    const email = normalizeEmail(req.body?.email);
+    if (email !== SUPER_ADMIN_EMAIL || typeof code !== 'string' || !/^\d{6}$/.test(code)) {
+        return res.status(400).json({ error: 'Kode verifikasi tidak valid.' });
+    }
+    if (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 255) {
+        return res.status(400).json({ error: 'Nama harus berisi 2–255 karakter.' });
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128 || !newPassword.trim()) {
+        return res.status(400).json({ error: 'Password baru harus berisi 12–128 karakter.' });
+    }
+    if (newPassword !== confirmPassword) {
+        return res.status(400).json({ error: 'Konfirmasi password tidak cocok.' });
+    }
+    if (!process.env.JWT_SECRET) return res.status(503).json({ error: 'Konfigurasi keamanan server belum lengkap.' });
+
+    let connection;
+    try {
+        connection = await db.getConnection();
+        await connection.beginTransaction();
+        const [challenges] = await connection.execute(
+            'SELECT id, code_hash, purpose, attempt_count, consumed_at, expires_at > NOW() AS is_valid FROM super_admin_verifications WHERE email = ? ORDER BY id DESC LIMIT 1 FOR UPDATE',
+            [email]
+        );
+        const challenge = challenges[0];
+        if (!challenge || challenge.consumed_at || !challenge.is_valid || challenge.attempt_count >= 5) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'Kode kedaluwarsa atau tidak valid. Minta kode baru.' });
+        }
+        const expectedHash = verificationCodeHash(email, challenge.purpose, code, JWT_SECRET);
+        if (!constantTimeHexEqual(challenge.code_hash, expectedHash)) {
+            await connection.execute('UPDATE super_admin_verifications SET attempt_count = attempt_count + 1 WHERE id = ?', [challenge.id]);
+            await connection.commit();
+            return res.status(400).json({ error: 'Kode verifikasi tidak valid.' });
+        }
+
+        const [globalAdmins] = await connection.execute(
+            "SELECT ugr.user_id, u.email FROM user_global_roles ugr JOIN users u ON u.id = ugr.user_id WHERE ugr.role = 'super_admin' FOR UPDATE"
+        );
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+        if (challenge.purpose === 'bootstrap') {
+            if (globalAdmins.length !== 0) {
+                await connection.rollback();
+                return res.status(409).json({ error: 'Akun Super Admin sudah terdaftar.' });
+            }
+            const [existingUsers] = await connection.execute('SELECT id FROM users WHERE email = ? FOR UPDATE', [email]);
+            let userId;
+            if (existingUsers.length > 0) {
+                userId = existingUsers[0].id;
+                await connection.execute('UPDATE users SET name = ?, password_hash = ? WHERE id = ?', [name.trim(), passwordHash, userId]);
+            } else {
+                const [inserted] = await connection.execute(
+                    'INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)',
+                    [name.trim(), email, passwordHash]
+                );
+                userId = inserted.insertId;
+            }
+            await connection.execute("INSERT INTO user_global_roles (user_id, role) VALUES (?, 'super_admin')", [userId]);
+        } else if (challenge.purpose === 'recovery' && globalAdmins.length === 1 && normalizeEmail(globalAdmins[0].email) === email) {
+            await connection.execute('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, globalAdmins[0].user_id]);
+        } else {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Status akun Super Admin telah berubah. Minta kode baru.' });
+        }
+        await connection.execute('UPDATE super_admin_verifications SET consumed_at = NOW() WHERE id = ?', [challenge.id]);
+        await connection.commit();
+        return res.json({ message: 'Akun Super Admin siap. Silakan login dengan email dan password baru.' });
+    } catch (error) {
+        if (connection) await connection.rollback();
+        console.error('[SUPER ADMIN] Verification completion failed:', error);
+        return res.status(500).json({ error: 'Gagal menyelesaikan verifikasi Super Admin.' });
+    } finally {
+        if (connection) connection.release();
+    }
+});
+
 app.post('/api/auth/register', async (req, res) => {
-    console.log('[AUTH] Register request received:', req.body);
     let { name, email, password } = req.body;
     try {
         if (!email || !password) {
             return res.status(400).json({ error: 'Email and password are required' });
         }
         email = email.trim().toLowerCase();
+        if (email === SUPER_ADMIN_EMAIL) {
+            return res.status(403).json({ error: 'Alamat ini hanya dapat didaftarkan melalui verifikasi Super Admin.' });
+        }
         console.log(`[AUTH] Checking for existing user: ${email}`);
         const [existing] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
         if (existing.length > 0) {
@@ -809,6 +954,7 @@ app.post('/api/auth/login', async (req, res) => {
         );
         let tenant_id = tenantUsers.length > 0 ? tenantUsers[0].tenant_id : null;
         let role = tenantUsers.length > 0 ? tenantUsers[0].role : null;
+        if (role === 'super_admin') role = 'guest';
 
         // 3b. Identify primary tenant (the first admin workspace, i.e. the one created during registration)
         const [adminTenants] = await db.execute(
@@ -817,8 +963,9 @@ app.post('/api/auth/login', async (req, res) => {
         );
         const primary_tenant_id = adminTenants.length > 0 ? adminTenants[0].tenant_id : tenant_id;
 
-        // Super Admin Hardcode Override
-        if (user.id === 1 || user.email === 'm.taqizdihar@gmail.com') {
+        const isSuperAdmin = await hasGlobalSuperAdminRole(db, user.id, user.email);
+        if (isSuperAdmin) {
+            if (!process.env.JWT_SECRET) return res.status(503).json({ error: 'Konfigurasi keamanan server belum lengkap.' });
             role = 'super_admin';
         }
 
@@ -839,7 +986,11 @@ app.post('/api/auth/login', async (req, res) => {
             }
         }
 
-        const token = jwt.sign({ userId: user.id, email: user.email, tenant_id: primary_tenant_id, role: role || 'admin' }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({
+            userId: user.id, email: user.email, tenant_id: primary_tenant_id,
+            role: role || 'guest',
+            ...(isSuperAdmin ? { credential_version: credentialVersion(user.password_hash, JWT_SECRET) } : {})
+        }, JWT_SECRET, { expiresIn: '7d' });
         
         console.log(`[AUTH] Login successful for ${email}. Tenant: ${tenant_id || 'NONE'}, Role: ${role}`);
 
@@ -852,7 +1003,7 @@ app.post('/api/auth/login', async (req, res) => {
                 email: user.email, 
                 profile_picture_url: user.profile_picture_url,
                 tenant_id: primary_tenant_id, 
-                role: role || 'admin', 
+                role: role || 'guest',
                 site_name 
             },
             tenant_id: primary_tenant_id,
@@ -902,7 +1053,7 @@ app.post('/api/auth/setup', authenticateToken, async (req, res) => {
         );
 
         // Sign fresh token
-        const token = jwt.sign({ userId, email: req.user.email, tenant_id: tenantId, role: 'admin' }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ userId, email: req.user.email, tenant_id: tenantId, role: req.user.role, ...(req.user.isSuperAdmin ? { credential_version: req.user.credential_version } : {}) }, JWT_SECRET, { expiresIn: '7d' });
         
         console.log(`[AUTH] Setup finalized. Tenant ID: ${tenantId}, Subdomain: ${generatedSubdomain}`);
         res.status(200).json({ 
@@ -939,16 +1090,13 @@ app.post('/api/auth/switch-workspace', authenticateToken, async (req, res) => {
             [tenant_id, userId]
         );
 
-        // Super Admin bypass: always allow switching
-        // Super Admin bypass: strictly check user ID and explicit email rather than stale JWT role
-        const [userCheck] = await db.execute('SELECT email FROM users WHERE id = ?', [userId]);
-        const isSuperAdmin = userId === 1 || (userCheck.length > 0 && userCheck[0].email === 'm.taqizdihar@gmail.com');
+        const isSuperAdmin = req.user.isSuperAdmin === true;
 
         if (membership.length === 0 && !isSuperAdmin) {
             return res.status(403).json({ error: 'Anda tidak memiliki akses aktif ke workspace ini.' });
         }
 
-        const targetRole = isSuperAdmin ? 'super_admin' : (membership.length > 0 ? membership[0].role : 'guest');
+        const targetRole = isSuperAdmin ? 'super_admin' : (membership.length > 0 && membership[0].role !== 'super_admin' ? membership[0].role : 'guest');
 
         // 2. Fetch site_name for the target workspace
         let site_name = 'My Site';
@@ -966,7 +1114,7 @@ app.post('/api/auth/switch-workspace', authenticateToken, async (req, res) => {
 
         // 4. Re-issue JWT with the target tenant context
         const newToken = jwt.sign(
-            { userId, email: req.user.email, tenant_id: parseInt(tenant_id, 10), role: targetRole },
+            { userId, email: req.user.email, tenant_id: parseInt(tenant_id, 10), role: targetRole, ...(isSuperAdmin ? { credential_version: req.user.credential_version } : {}) },
             JWT_SECRET,
             { expiresIn: '7d' }
         );
@@ -2630,26 +2778,10 @@ app.get('/api/user/profile', async (req, res) => {
         
         const user = rows[0];
 
-        let role = 'guest';
-        if (tid) {
-            const [membership] = await db.execute(
-                "SELECT role FROM tenant_users WHERE tenant_id = ? AND user_id = ? AND status = 'active'",
-                [tid, userId]
-            );
-            if (membership.length > 0) {
-                role = membership[0].role;
-            }
-        }
-        
-        const isSuperAdmin = userId === 1 || user.email === 'm.taqizdihar@gmail.com';
-        if (isSuperAdmin) {
-             role = 'super_admin';
-        }
-        
         res.json({
             ...user,
             tenant_id: tid,
-            role: role
+            role: req.user.role
         });
     } catch (error) {
         console.error('[PROFILE ERROR] Get profile:', error);

@@ -138,4 +138,23 @@ const sendInquiryNotification = async (adminEmail, inquiryData) => {
     }
 };
 
-module.exports = { sendInquiryNotification };
+const sendSuperAdminVerificationCode = async (adminEmail, code, purpose) => {
+    const mailer = getTransporter();
+    const fromAddress = process.env.EMAIL_FROM;
+    if (!mailer || !fromAddress) return false;
+
+    try {
+        await mailer.sendMail({
+            from: `"UNI-VERSE CMS" <${fromAddress}>`,
+            to: adminEmail,
+            subject: purpose === 'bootstrap' ? '[UNI-VERSE] Verifikasi akun Super Admin' : '[UNI-VERSE] Pemulihan akun Super Admin',
+            text: `Kode verifikasi Anda: ${code}\n\nKode berlaku selama 10 menit. Jika Anda tidak meminta kode ini, abaikan email ini.`,
+        });
+        return true;
+    } catch (error) {
+        console.error('[EMAIL] Failed to send super admin verification code:', error.message);
+        return false;
+    }
+};
+
+module.exports = { sendInquiryNotification, sendSuperAdminVerificationCode };

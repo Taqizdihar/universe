@@ -9,7 +9,7 @@ const routeStart = source.indexOf("app.put('/api/v1/superadmin/tenants/:tenantId
 const routeEnd = source.indexOf("app.patch('/api/v1/superadmin/tenants/:id/status'", routeStart);
 assert.ok(routeStart > 0 && routeEnd > routeStart);
 
-function createRoute({ adminFound = true } = {}) {
+function createRoute({ adminFound = true, targetIsSuperAdmin = false } = {}) {
     const calls = [];
     const authenticateToken = () => {};
     const verifySuperAdmin = () => {};
@@ -31,6 +31,7 @@ function createRoute({ adminFound = true } = {}) {
         app: { put(...args) { registration = args; } },
         authenticateToken,
         verifySuperAdmin,
+        hasGlobalSuperAdminRole: async () => targetIsSuperAdmin,
         db,
         bcrypt: { async hash(password, rounds) {
             calls.push({ password, rounds });
@@ -74,6 +75,13 @@ test('emergency reset refuses accounts without an active admin membership in the
     const { handler, calls } = createRoute({ adminFound: false });
     const response = await request(handler, { newPassword: 'CorrectHorse123!', confirmPassword: 'CorrectHorse123!' });
     assert.equal(response.statusCode, 404);
+    assert.equal(calls.length, 1);
+});
+
+test('emergency reset cannot change the global super admin password', async () => {
+    const { handler, calls } = createRoute({ targetIsSuperAdmin: true });
+    const response = await request(handler, { newPassword: 'CorrectHorse123!', confirmPassword: 'CorrectHorse123!' });
+    assert.equal(response.statusCode, 403);
     assert.equal(calls.length, 1);
 });
 
