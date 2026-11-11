@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS workspace_compatibility (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tenant_id INT NOT NULL,
+  origin_system VARCHAR(32) NOT NULL DEFAULT 'kroombox_native',
+  content_mode VARCHAR(32) NOT NULL DEFAULT 'legacy_compatible',
+  api_contract_version VARCHAR(24) NOT NULL DEFAULT 'legacy-api-v1',
+  migration_batch_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  verified_at DATETIME(6) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_workspace_compatibility_tenant (tenant_id),
+  KEY idx_workspace_compatibility_batch (migration_batch_id),
+  CONSTRAINT fk_workspace_compatibility_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  CONSTRAINT fk_workspace_compatibility_batch FOREIGN KEY (migration_batch_id) REFERENCES migration_batches(batch_id) ON DELETE RESTRICT,
+  CONSTRAINT chk_workspace_compatibility_origin CHECK (origin_system IN ('aiven_v2', 'kroombox_native', 'manual_import')),
+  CONSTRAINT chk_workspace_compatibility_mode CHECK (content_mode IN ('legacy_compatible', 'hybrid', 'native_v2')),
+  CONSTRAINT chk_workspace_compatibility_contract CHECK (api_contract_version IN ('legacy-api-v1', 'dynamic-api-v2')),
+  CONSTRAINT chk_workspace_compatibility_verified CHECK (verified_at IS NULL OR migration_batch_id IS NOT NULL)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

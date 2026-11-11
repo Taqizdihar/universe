@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS migration_asset_map (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  batch_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  source_media_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  target_media_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  source_reference_type VARCHAR(32) NOT NULL,
+  target_reference_type VARCHAR(32) NULL,
+  mapping_status VARCHAR(24) NOT NULL DEFAULT 'proposed',
+  verification_status VARCHAR(24) NOT NULL DEFAULT 'pending',
+  verified_at DATETIME(6) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_asset_map_source (batch_id, source_media_id),
+  UNIQUE KEY uq_asset_map_target (batch_id, target_media_id),
+  CONSTRAINT fk_asset_map_batch FOREIGN KEY (batch_id) REFERENCES migration_batches(batch_id) ON DELETE RESTRICT,
+  CONSTRAINT chk_asset_reference_source CHECK (source_reference_type IN ('db_media_id', 'cdn_file_id', 'media_url', 'nested_json_reference')),
+  CONSTRAINT chk_asset_reference_target CHECK (target_reference_type IS NULL OR target_reference_type IN ('db_media_id', 'cdn_file_id', 'media_url', 'nested_json_reference')),
+  CONSTRAINT chk_asset_source_id CHECK (source_media_id REGEXP '^[A-Za-z0-9:_-]{1,128}$'),
+  CONSTRAINT chk_asset_target_id CHECK (target_media_id IS NULL OR target_media_id REGEXP '^[A-Za-z0-9:_-]{1,128}$'),
+  CONSTRAINT chk_asset_mapping_status CHECK (mapping_status IN ('proposed', 'needs_review', 'verified', 'rejected')),
+  CONSTRAINT chk_asset_verification_status CHECK (verification_status IN ('pending', 'passed', 'failed')),
+  CONSTRAINT chk_asset_verified CHECK (verified_at IS NULL OR (mapping_status = 'verified' AND verification_status = 'passed' AND target_media_id IS NOT NULL))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
