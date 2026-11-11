@@ -40,12 +40,19 @@ const posts = [
     { id: 2, tenant_id: 1, slug: 'secret-post', title: 'Draft post', status: 'draft', content: '[]' }
 ];
 const sqlLog = [];
+const authVersions = new Map();
+let recoverySchemaReady = true;
 const mockDb = {
     async execute(sql, params = []) {
         sqlLog.push({ sql, params });
         const q = sql.replace(/\s+/g, ' ').trim().toLowerCase();
         if (q.startsWith('select name, email, password_hash from users where id'))
             return [users.filter(u => u.id === params[0])];
+        if (!recoverySchemaReady && (q.startsWith('select version from account_auth_state') || q.startsWith('select id from password_reset_tokens limit 0'))) {
+            const error = new Error('schema not migrated'); error.code = 'ER_NO_SUCH_TABLE'; throw error;
+        }
+        if (q.startsWith('select version from account_auth_state where user_id'))
+            return [authVersions.has(params[0]) ? [{ version: authVersions.get(params[0]) }] : []];
         if (q.startsWith('select id, name, email, profile_picture_url, password_hash from users where email'))
             return [users.filter(u => u.email === params[0])];
         if (q.startsWith('select name, email, profile_picture_url from users where id'))
@@ -129,6 +136,12 @@ async function request(route, { method = 'GET', userId, tenantId, activeTenant, 
     return { status: response.status, headers: response.headers, body: await response.json().catch(() => null) };
 }
 
+test('existing JWTs remain accepted before the recovery schema is migrated', async () => {
+    recoverySchemaReady = false;
+    try { assert.equal((await request('/api/settings/api-key', { userId: 101, tenantId: 1 })).status, 200); }
+    finally { recoverySchemaReady = true; }
+});
+
 test('JWT, tenant headers and persisted membership isolate API keys', async () => {
     assert.equal((await request('/api/settings/api-key')).status, 401);
     assert.equal((await request('/api/settings/api-key', { userId: 101, tenantId: 1, bearer: 'invalid' })).status, 403);
@@ -146,6 +159,17 @@ test('JWT, tenant headers and persisted membership isolate API keys', async () =
     assert.match(regenerated.body.api_key, /^uni_[0-9a-f]{48}$/);
     assert.equal(keys.get(1), regenerated.body.api_key);
     keys.set(1, 'fixture-key-alpha');
+});
+
+test('password reset revokes old account JWTs while other users retain access', async () => {
+    const oldToken = token(101, 1);
+    assert.equal((await request('/api/settings/api-key', { userId: 101, tenantId: 1, bearer: oldToken })).status, 200);
+    authVersions.set(101, 1);
+    try {
+        assert.equal((await request('/api/settings/api-key', { userId: 101, tenantId: 1, bearer: oldToken })).status, 401);
+        assert.equal((await request('/api/settings/api-key', { userId: 101, tenantId: 1, bearer: token(101, 1, { auth_version: 1 }) })).status, 200);
+        assert.equal((await request('/api/settings/api-key', { userId: 102, tenantId: 2 })).status, 200);
+    } finally { authVersions.delete(101); }
 });
 
 test('settings and member operations reject cross-tenant targets and privilege escalation', async () => {

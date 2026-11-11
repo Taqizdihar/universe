@@ -23,9 +23,20 @@ function createRoute({ adminFound = true, targetIsSuperAdmin = false } = {}) {
                 assert.deepEqual([...params], [7, 42]);
                 return [adminFound ? [{ id: 42, email: 'admin@example.com' }] : []];
             }
-            if (sql.includes('UPDATE users SET password_hash')) return [{ affectedRows: 1 }];
             throw new Error(`Unexpected SQL: ${sql}`);
-        }
+        },
+        async getConnection() { return {
+            async beginTransaction() { calls.push({ tx: 'begin' }); },
+            async execute(sql, params) {
+                calls.push({ sql, params });
+                if (sql.startsWith('SELECT id FROM users')) return [[{ id: 42 }]];
+                if (sql.startsWith('UPDATE users SET password_hash')) return [{ affectedRows: 1 }];
+                throw new Error(`Unexpected transaction SQL: ${sql}`);
+            },
+            async commit() { calls.push({ tx: 'commit' }); },
+            async rollback() { calls.push({ tx: 'rollback' }); },
+            release() {}
+        }; }
     };
     const context = {
         app: { put(...args) { registration = args; } },
@@ -37,6 +48,7 @@ function createRoute({ adminFound = true, targetIsSuperAdmin = false } = {}) {
             calls.push({ password, rounds });
             return 'hashed-password';
         } },
+        bumpVersionIfAvailable: async (_connection, userId) => { calls.push({ bump: userId }); },
         logActivity(...args) { calls.push({ audit: [...args] }); },
         console
     };
@@ -89,9 +101,10 @@ test('emergency reset stores only a hash for the selected admin and records an a
     const { handler, calls } = createRoute();
     const response = await request(handler, { newPassword: 'CorrectHorse123!', confirmPassword: 'CorrectHorse123!' });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual([...calls[2].params], ['hashed-password', 42]);
+    assert.deepEqual([...calls.find(call => call.sql?.startsWith('UPDATE users SET password_hash')).params], ['hashed-password', 42]);
     assert.equal(calls[1].rounds, 10);
-    assert.equal(calls[3].audit[0], 7);
-    assert.equal(calls[3].audit[1], 1);
+    assert.equal(calls.find(call => call.bump).bump, 42);
+    assert.equal(calls.find(call => call.audit).audit[0], 7);
+    assert.equal(calls.find(call => call.audit).audit[1], 1);
     assert.doesNotMatch(JSON.stringify(response), /CorrectHorse123/);
 });

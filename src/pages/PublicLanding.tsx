@@ -35,101 +35,8 @@ export function PublicLanding() {
     fetchVersion();
   }, []);
 
-  useEffect(() => {
-    const canvas = document.getElementById('particle-canvas') as HTMLCanvasElement;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let particles: any[] = [];
-    let animationFrameId: number;
-
-    const resize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-    window.addEventListener('resize', resize);
-    resize();
-
-    const icons = ['🎨', '🖌️', '🌟', '✨', '⚡', '💫', '✏️', '💛'];
-    let lastSpawnTime = 0;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const isInteractive = (e.target as HTMLElement).closest('button, a, [role="button"], img');
-      if (isInteractive) return;
-
-      const now = Date.now();
-      // Adjust delay speed: 1 emoji per 0.2 seconds (200ms)
-      if (now - lastSpawnTime >= 200) {
-        lastSpawnTime = now;
-
-        particles.push({
-          x: e.clientX,
-          y: e.clientY,
-          vx: (Math.random() - 0.5) * 1.5, // gentle horizontal drift
-          vy: Math.random() * 1.5 + 0.5,   // fall downwards
-          life: 1.0,
-          initialSize: Math.random() * 10 + 15,
-          icon: icons[Math.floor(Math.random() * icons.length)],
-          rotation: Math.random() * 360,
-          vRot: (Math.random() - 0.5) * 4
-        });
-
-        // Performance: Maintain short array for immediate cleanup
-        if (particles.length > 50) {
-          particles.splice(0, particles.length - 50);
-        }
-      }
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-
-    const animate = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vy += 0.08; // Physics: gravity effect
-        p.life -= 0.02; // Fade speed
-        p.rotation += p.vRot;
-
-        if (p.life <= 0) {
-          particles.splice(i, 1);
-        } else {
-          // Fade out and shrink simultaneously
-          const currentSize = p.initialSize * p.life;
-          ctx.save();
-          ctx.translate(p.x, p.y);
-          ctx.rotate((p.rotation * Math.PI) / 180);
-          ctx.globalAlpha = p.life;
-          ctx.font = `${currentSize}px Arial`;
-          ctx.fillStyle = '#FAD02C';
-          ctx.fillText(p.icon, -currentSize/2, currentSize/2);
-          ctx.restore();
-        }
-      }
-
-      animationFrameId = requestAnimationFrame(animate);
-    };
-    animate();
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      window.removeEventListener('mousemove', handleMouseMove);
-      cancelAnimationFrame(animationFrameId);
-    };
-  }, []);
-
   return (
-    <div className="min-h-screen bg-[#0B0B0B] text-white flex flex-col font-sans selection:bg-amber-400 selection:text-black overflow-hidden relative cursor-pencil">
-      <style>{`
-        .cursor-pencil {
-          cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='white' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z'/%3E%3Cpath d='m15 5 4 4'/%3E%3C/svg%3E") 2 22, auto;
-        }
-      `}</style>
-
+    <div className="min-h-screen bg-[#0B0B0B] text-white flex flex-col font-sans selection:bg-amber-400 selection:text-black overflow-hidden relative">
       <div className="absolute inset-0 z-0 pointer-events-none" aria-hidden="true">
         <Galaxy
           starColors={['#FFFFFF', '#F7D15B', '#98A5FF', '#E6E6F2']}
@@ -137,16 +44,15 @@ export function PublicLanding() {
           glowIntensity={0.3}
           flareIntensity={0.8}
           starSpeed={0.5}
-          mouseRepulsion
-          clickWarp
+          mouseInteraction={false}
+          mouseRepulsion={false}
+          clickWarp={false}
           transparent={false}
           backgroundColor="#0B0B0B"
           dpr={1.5}
         />
       </div>
 
-      <canvas id="particle-canvas" className="absolute inset-0 pointer-events-none z-0" />
-      
       {/* Navigation */}
       <header className="flex items-center justify-between px-10 py-6 sticky top-0 z-50 bg-[#0B0B0B]/70 backdrop-blur-sm">
         <div className="flex items-center">

@@ -4,7 +4,7 @@ const rateLimit = require('express-rate-limit');
 
 const cors = require('cors');
 require('dotenv').config();
-const { sendInquiryNotification, sendSuperAdminVerificationCode } = require('./services/emailService');
+const { sendInquiryNotification, sendSuperAdminVerificationCode, sendPasswordResetEmail } = require('./services/emailService');
 const { SUPER_ADMIN_EMAIL } = require('./config/superAdmin');
 const { normalizeEmail, hasGlobalSuperAdminRole, credentialVersion, verificationCodeHash, constantTimeHexEqual } = require('./utils/superAdminAuth');
 const { parseTenantId, can, resolveTenantContext } = require('./security/tenantAccess');
@@ -13,6 +13,7 @@ if (!JWT_SECRET || Buffer.byteLength(JWT_SECRET, 'utf8') < 32) {
     throw new Error('JWT_SECRET must be configured with at least 32 bytes.');
 }
 const db = require('./server/lib/db');
+const { currentVersion, bumpVersion, bumpVersionIfAvailable } = require('./security/authVersion');
 const { logActivity } = require('./services/loggerService');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -67,6 +68,8 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+const { createPasswordRecoveryRouter } = require('./server/routes/passwordRecovery');
+app.use('/api/auth', createPasswordRecoveryRouter({ db, bcrypt, sendPasswordResetEmail, bumpVersion, superAdminEmail: SUPER_ADMIN_EMAIL }));
 
 // Sanitize public JSON at the response boundary, including legacy stored HTML.
 app.use(['/api/public', '/api/v1/public'], sanitizePublicJson);
@@ -295,6 +298,9 @@ const authenticateToken = async (req, res, next) => {
         if (userCheck.length === 0) return res.status(401).json({ error: 'Unauthorized' });
         user.name = userCheck[0].name;
         user.email = userCheck[0].email;
+        const authVersion = await currentVersion(db, user.userId);
+        if ((user.auth_version || 0) !== authVersion) return res.status(401).json({ error: 'Sesi kedaluwarsa. Silakan masuk kembali.' });
+        user.auth_version = authVersion;
         user.isSuperAdmin = false;
         const isSuperAdmin = await hasGlobalSuperAdminRole(db, user.userId, user.email);
         
@@ -486,6 +492,7 @@ app.put('/api/v1/superadmin/tenants/:tenantId/admins/:adminId/password', authent
         return res.status(400).json({ error: 'Konfirmasi password tidak cocok.' });
     }
 
+    let connection;
     try {
         const [admins] = await db.execute(
             `SELECT u.id, u.email FROM tenants t
@@ -500,12 +507,21 @@ app.put('/api/v1/superadmin/tenants/:tenantId/admins/:adminId/password', authent
         }
 
         const passwordHash = await bcrypt.hash(newPassword, 10);
-        await db.execute('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, adminId]);
+        connection = await db.getConnection();
+        await connection.beginTransaction();
+        const [locked] = await connection.execute('SELECT id FROM users WHERE id = ? FOR UPDATE', [adminId]);
+        if (!locked.length) { await connection.rollback(); return res.status(404).json({ error: 'Admin tidak ditemukan.' }); }
+        await connection.execute('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, adminId]);
+        await bumpVersionIfAvailable(connection, adminId);
+        await connection.commit();
         logActivity(tenantId, req.user.userId, req.user.name || req.user.email, 'super_admin', `Emergency password reset for admin ${adminId}`, 'success');
         res.json({ message: 'Password admin tenant berhasil direset.' });
     } catch (error) {
+        if (connection) await connection.rollback();
         logOperationalError('[SUPER ADMIN] Emergency password reset error:', error);
         res.status(500).json({ error: 'Gagal mereset password admin tenant.' });
+    } finally {
+        if (connection) connection.release();
     }
 });
 
@@ -919,7 +935,7 @@ app.post('/api/auth/register', registrationLimiter, async (req, res) => {
             })]
         );
 
-        const token = jwt.sign({ userId, email, tenant_id: tenantId, role: 'admin' }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ userId, email, tenant_id: tenantId, role: 'admin', auth_version: 0 }, JWT_SECRET, { expiresIn: '7d' });
 
         res.status(201).json({ 
             message: 'Success', 
@@ -993,9 +1009,11 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
             }
         }
 
+        const accountVersion = await currentVersion(db, user.id);
         const token = jwt.sign({
             userId: user.id, email: user.email, tenant_id: primary_tenant_id,
             role: role || 'guest',
+            auth_version: accountVersion,
             ...(isSuperAdmin ? { credential_version: credentialVersion(user.password_hash, JWT_SECRET) } : {})
         }, JWT_SECRET, { expiresIn: '7d' });
         
@@ -1062,7 +1080,7 @@ app.post('/api/auth/setup', authenticateToken, async (req, res) => {
         );
 
         // Sign fresh token
-        const token = jwt.sign({ userId, email: req.user.email, tenant_id: tenantId, role: req.user.role, ...(req.user.isSuperAdmin ? { credential_version: req.user.credential_version } : {}) }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ userId, email: req.user.email, tenant_id: tenantId, role: req.user.role, auth_version: req.user.auth_version, ...(req.user.isSuperAdmin ? { credential_version: req.user.credential_version } : {}) }, JWT_SECRET, { expiresIn: '7d' });
         
         console.log(`[AUTH] Setup finalized. Tenant ID: ${tenantId}, Subdomain: ${generatedSubdomain}`);
         res.status(200).json({ 
@@ -1116,7 +1134,7 @@ app.post('/api/auth/switch-workspace', authenticateToken, async (req, res) => {
 
         // 4. Re-issue JWT with the target tenant context
         const newToken = jwt.sign(
-            { userId, email: req.user.email, tenant_id: targetTenantId, role: targetRole, ...(isSuperAdmin ? { credential_version: req.user.credential_version } : {}) },
+            { userId, email: req.user.email, tenant_id: targetTenantId, role: targetRole, auth_version: req.user.auth_version, ...(isSuperAdmin ? { credential_version: req.user.credential_version } : {}) },
             JWT_SECRET,
             { expiresIn: '7d' }
         );
@@ -2937,19 +2955,27 @@ app.put('/api/user/change-password', profilePasswordLimiter, async (req, res) =>
     if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128) {
         return res.status(400).json({ error: 'Password baru harus berisi 12–128 karakter.' });
     }
+    let connection;
     try {
-        const [users] = await db.execute('SELECT password_hash FROM users WHERE id = ?', [userId]);
-        if (users.length === 0) return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+        connection = await db.getConnection();
+        await connection.beginTransaction();
+        const [users] = await connection.execute('SELECT password_hash FROM users WHERE id = ? FOR UPDATE', [userId]);
+        if (users.length === 0) { await connection.rollback(); return res.status(404).json({ error: 'Pengguna tidak ditemukan' }); }
         
         const validPassword = await bcrypt.compare(currentPassword, users[0].password_hash);
-        if (!validPassword) return res.status(400).json({ error: 'Kata sandi saat ini salah' });
+        if (!validPassword) { await connection.rollback(); return res.status(400).json({ error: 'Kata sandi saat ini salah' }); }
         
         const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-        await db.execute('UPDATE users SET password_hash = ? WHERE id = ?', [hashedNewPassword, userId]);
-        res.json({ message: 'Kata sandi berhasil diubah' });
+        await connection.execute('UPDATE users SET password_hash = ? WHERE id = ?', [hashedNewPassword, userId]);
+        await bumpVersionIfAvailable(connection, userId);
+        await connection.commit();
+        res.json({ message: 'Kata sandi berhasil diubah. Silakan masuk kembali.' });
     } catch (error) {
+        if (connection) await connection.rollback();
         logOperationalError('[PROFILE ERROR] Change password:', error);
         res.status(500).json({ error: 'Gagal mengubah kata sandi' });
+    } finally {
+        if (connection) connection.release();
     }
 });
 

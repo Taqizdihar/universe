@@ -2,8 +2,7 @@
 // Email Service — Nodemailer + Brevo SMTP (Port 2525)
 // =============================================================
 // Sends transactional email notifications using Brevo's SMTP
-// relay on port 2525 (STARTTLS). This bypasses Render's firewall
-// which blocks ports 465 and 587 on free-tier instances.
+// relay on port 2525 (STARTTLS).
 //
 // Required environment variables:
 //   SMTP_HOST      — smtp-relay.brevo.com
@@ -11,7 +10,7 @@
 //   SMTP_USER      — Brevo login email
 //   SMTP_PASS      — Brevo SMTP key
 //   EMAIL_FROM     — Verified sender address
-//   FRONTEND_URL   — Frontend dashboard URL (Cloudflare pages.dev domain)
+//   FRONTEND_URL   — Trusted frontend origin used for recovery links
 // =============================================================
 
 const nodemailer = require('nodemailer');
@@ -32,10 +31,16 @@ const getTransporter = () => {
         return null;
     }
 
+    const port = parseInt(process.env.SMTP_PORT, 10) || 2525;
     transporter = nodemailer.createTransport({
         host,
-        port: parseInt(process.env.SMTP_PORT) || 2525,
-        secure: false, // Must be false for port 2525 — uses STARTTLS, not implicit SSL
+        port,
+        secure: port === 465,
+        requireTLS: port !== 465,
+        tls: { rejectUnauthorized: true },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 20000,
         auth: { user, pass },
         family: 4, // Force IPv4 to prevent connection issues on Render
     });
@@ -157,4 +162,24 @@ const sendSuperAdminVerificationCode = async (adminEmail, code, purpose) => {
     }
 };
 
-module.exports = { sendInquiryNotification, sendSuperAdminVerificationCode };
+const sendPasswordResetEmail = async (recipientEmail, resetUrl, mailerOverride = null) => {
+    const mailer = mailerOverride || getTransporter();
+    const fromAddress = process.env.EMAIL_FROM;
+    if (!mailer || !fromAddress) return false;
+    const button = `<a href="${resetUrl}" style="display:inline-block;background:#fbbf24;color:#18181b;padding:14px 22px;border-radius:10px;text-decoration:none;font-weight:bold">Atur Ulang Kata Sandi</a>`;
+    try {
+        await mailer.sendMail({
+            from: `"UNI-VERSE CMS" <${fromAddress}>`,
+            to: recipientEmail,
+            subject: '[UNI-VERSE] Pemulihan Kata Sandi',
+            text: `Kami menerima permintaan pemulihan kata sandi UNI-VERSE.\n\nAtur ulang dalam 30 menit melalui: ${resetUrl}\n\nJika Anda tidak meminta pemulihan ini, abaikan email ini. UNI-VERSE tidak akan pernah meminta kata sandi Anda melalui email.`,
+            html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:28px;color:#18181b"><h1>UNI-VERSE CMS</h1><p>Kami menerima permintaan pemulihan kata sandi Anda.</p><p>${button}</p><p>Tautan berlaku selama 30 menit. Jika tombol tidak berfungsi, salin URL berikut:</p><p style="word-break:break-all">${resetUrl}</p><p>Jika Anda tidak meminta pemulihan ini, abaikan email ini. UNI-VERSE tidak akan pernah meminta kata sandi Anda melalui email.</p></div>`
+        });
+        return true;
+    } catch (error) {
+        console.error('[EMAIL] Password reset delivery failed:', error.code || error.name || 'UNKNOWN');
+        return false;
+    }
+};
+
+module.exports = { sendInquiryNotification, sendSuperAdminVerificationCode, sendPasswordResetEmail };

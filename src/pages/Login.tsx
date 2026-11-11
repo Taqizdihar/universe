@@ -135,6 +135,7 @@ export function Login() {
                 />
                 <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600 group-focus-within:text-amber-400 transition-colors" />
               </div>
+              <div className="mt-2 text-right"><Link to="/forgot-password" className="text-sm font-semibold text-amber-400 hover:text-amber-300">Lupa kata sandi?</Link></div>
             </div>
 
             <div>

@@ -140,9 +140,14 @@ export function Profile() {
         newPassword: passwords.new
       }, { headers });
       
-      setMessage({ type: 'success', text: 'Kata sandi berhasil diubah!' });
       setPasswords({ current: '', new: '', confirm: '' });
       setShowPassForm(false);
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('active_tenant_id');
+      localStorage.removeItem('active_role');
+      localStorage.removeItem('primary_tenant_id');
+      window.location.assign('/login');
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Gagal mengubah kata sandi.' });
     } finally {

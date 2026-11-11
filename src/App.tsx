@@ -39,6 +39,9 @@ import { HeadlessCmsProvider } from './context/HeadlessCmsContext';
 // Auth Pages
 import { PublicLanding } from './pages/PublicLanding';
 import { Login } from './pages/Login';
+import { ForgotPassword } from './pages/ForgotPassword';
+import { ResetPassword } from './pages/ResetPassword';
+import { SuperAdminRecovery } from './pages/SuperAdminRecovery';
 import { Register } from './pages/Register';
 import { Setup } from './pages/Setup';
 import { PublicView } from './pages/PublicView';
@@ -54,6 +57,9 @@ export default function App() {
               {/* Public Routes */}
               <Route path="/" element={<PublicLanding />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/super-admin/recovery" element={<SuperAdminRecovery />} />
               <Route path="/register" element={<Register />} />
               <Route path="/setup" element={<Setup />} />
               <Route path="/preview/:subdomain/:slug?" element={<PublicView />} />
