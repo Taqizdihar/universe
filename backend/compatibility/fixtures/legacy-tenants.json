@@ -1,0 +1,14 @@
+{
+  "restaurant": {
+    "tenant": { "id": 101, "subdomain": "sample-diner", "status": "active" },
+    "page": { "id": 201, "tenant_id": 101, "title": "Home", "slug": "home", "status": "published", "priority": 1, "is_in_navbar": 1, "content": "[{\"id\":\"hero-1\",\"type\":\"hero\",\"data\":{\"headline\":\"Welcome to Sample Diner\",\"sub_headline\":\"Fresh food\",\"cta_buttons\":[{\"text\":\"View Menu\",\"link\":\"/menu\"}],\"hero_image\":\"/uploads/hero.jpg\",\"custom_property\":{\"animation\":\"fade-in\"}}}]" },
+    "settings": { "site_name": "Sample Diner", "tagline": "Fresh food", "logo_url": "/uploads/logo.png", "global_options": "{\"support_email\":\"hello@example.test\",\"footer_config\":{\"footer_text\":\"Visit us\",\"copyright_text\":\"Sample Diner\",\"social_links\":[{\"url\":\"https://example.test/social\"}],\"footer_nav_1\":[{\"label\":\"Menu\",\"url\":\"/menu\"}],\"address\":\"Example Street\",\"custom_footer\":{\"hours\":\"09:00\"}}}" },
+    "media": { "id": 301, "filename": "hero.jpg", "file_name": "hero.jpg", "file_url": "/uploads/hero.jpg", "folder_id": 7 }
+  },
+  "organization": {
+    "tenant": { "id": 102, "subdomain": "sample-organization", "status": "active" },
+    "pages": [{ "id": 202, "title": "About", "slug": "about", "status": "published", "priority": 2, "is_in_navbar": 1 }, { "id": 203, "title": "Draft", "slug": "draft", "status": "draft", "priority": 1, "is_in_navbar": 1 }],
+    "posts": [{ "id": 401, "template_type": "Artikel", "content": [{ "body_content": "<p>News <strong>update</strong></p>", "featured_image_id": 301 }] }, { "id": 402, "template_type": "Event", "content": [{ "event_description": "Event details", "event_labels": ["Education"] }] }, { "id": 403, "template_type": "Pengumuman", "content": [{ "alert_message": "<p>Important</p>", "alert_message_format": "html", "excerpt_html": "<p><strong>Notice</strong></p>" }] }]
+  },
+  "complex": { "tenant": { "id": 103, "subdomain": "sample-complex", "status": "active" }, "content": [{ "id": "unknown-1", "type": "custom_widget", "data": { "nested": [{ "label": "One", "value": null }, { "label": "Two", "value": { "items": [1, true, "three"] } }], "cta_buttons": [{ "text": "Open", "link": "https://example.test/open" }], "background_image_url": "data:image/png;base64,AAAA", "custom_metadata": { "version": 3 } } }] }
+}

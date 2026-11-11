@@ -1,0 +1,205 @@
+{
+  "version": "legacy-api-v1",
+  "source": "backend/server/routes/data.js",
+  "tenantResolution": "x-api-key -> active api_keys.tenant_id; every query scoped to req.api_tenant_id",
+  "endpoints": [
+    {
+      "id": "pages.list",
+      "method": "GET",
+      "path": "/api/v1/public/pages",
+      "authentication": "x-api-key (active tenant)",
+      "successStatus": 200,
+      "responseRoot": "array",
+      "significantFields": {
+        "id": "number",
+        "tenant_id": "number",
+        "slug": "string",
+        "title": "string",
+        "content": "array|object|string|null",
+        "status": "string",
+        "is_contact_form_active": "boolean (when parsed content is object)"
+      },
+      "publication": "status='published'",
+      "ordering": "unspecified",
+      "notes": "SELECT pages.*; featured_image and nested image/url/src-like strings normalized; content sanitized. No SQL ORDER BY."
+    },
+    {
+      "id": "pages.detail",
+      "method": "GET",
+      "path": "/api/v1/public/pages/:slug",
+      "authentication": "x-api-key (active tenant)",
+      "successStatus": 200,
+      "responseRoot": "object",
+      "significantFields": {
+        "id": "number",
+        "tenant_id": "number",
+        "slug": "string",
+        "title": "string",
+        "content": "array|object|string|null",
+        "status": "string",
+        "is_contact_form_active": "boolean (when parsed content is object)"
+      },
+      "publication": "status='published'",
+      "ordering": null,
+      "notes": "404 {error} when absent; exact slug; same normalization as list."
+    },
+    {
+      "id": "posts.list",
+      "method": "GET",
+      "path": "/api/v1/public/posts",
+      "authentication": "x-api-key (active tenant)",
+      "successStatus": 200,
+      "responseRoot": "array",
+      "significantFields": {
+        "id": "number",
+        "tenant_id": "number",
+        "slug": "string",
+        "title": "string",
+        "template_type": "string|null",
+        "category_name": "string|null",
+        "category_slug": "string|null",
+        "content": "array|object|string|null (delivery usually array)",
+        "excerpt": "string",
+        "summary": "string",
+        "description": "string",
+        "excerpt_html": "string (announcement only)"
+      },
+      "publication": "status='published'",
+      "ordering": "created_at DESC",
+      "notes": "SELECT posts.* plus category aliases. normalizePostText supplies excerpt/summary/description; announcement may add body_content/excerpt_html; custom blocks remain distinct."
+    },
+    {
+      "id": "posts.detail",
+      "method": "GET",
+      "path": "/api/v1/public/posts/:slug",
+      "authentication": "x-api-key (active tenant)",
+      "successStatus": 200,
+      "responseRoot": "object",
+      "significantFields": {
+        "id": "number",
+        "tenant_id": "number",
+        "slug": "string",
+        "title": "string",
+        "template_type": "string|null",
+        "category_name": "string|null",
+        "category_slug": "string|null",
+        "content": "array|object|string|null (delivery usually array)",
+        "excerpt": "string",
+        "summary": "string",
+        "description": "string",
+        "excerpt_html": "string (announcement only)"
+      },
+      "publication": "status='published'",
+      "ordering": null,
+      "notes": "404 {error} when absent; exact slug; same normalization as list."
+    },
+    {
+      "id": "settings.detail",
+      "method": "GET",
+      "path": "/api/v1/public/settings",
+      "authentication": "x-api-key (active tenant)",
+      "successStatus": 200,
+      "responseRoot": "object",
+      "significantFields": {
+        "site_name": "string|null",
+        "title": "string|null (alias)",
+        "tagline": "string|null",
+        "logo_url": "string|null",
+        "frontend_url": "string",
+        "support_email": "string",
+        "copyright_text": "string",
+        "footer_text": "string",
+        "social_links": "array",
+        "footer_nav_1": "array",
+        "footer_nav_2": "array",
+        "footer_contacts": "array",
+        "google_maps_url": "string|null",
+        "address": "string",
+        "alamat": "string (alias)"
+      },
+      "publication": null,
+      "ordering": null,
+      "notes": "404 {error} when absent; footer fields from global_options.footer_config; empty defaults as implementation. No API key or internal global_options exposed."
+    },
+    {
+      "id": "navigation.list",
+      "method": "GET",
+      "path": "/api/v1/public/navigation",
+      "authentication": "x-api-key (active tenant)",
+      "successStatus": 200,
+      "responseRoot": "array",
+      "significantFields": {
+        "title": "string",
+        "slug": "string"
+      },
+      "publication": "status='published' AND is_in_navbar=1",
+      "ordering": "priority ASC",
+      "notes": "No hidden fields returned."
+    },
+    {
+      "id": "post-categories.list",
+      "method": "GET",
+      "path": "/api/v1/public/post-categories",
+      "authentication": "x-api-key (active tenant)",
+      "successStatus": 200,
+      "responseRoot": "array",
+      "significantFields": {
+        "id": "number",
+        "tenant_id": "number",
+        "name": "string",
+        "slug": "string"
+      },
+      "publication": "none",
+      "ordering": "name ASC",
+      "notes": "SELECT *; endpoint has no category publication filter."
+    },
+    {
+      "id": "comments.list",
+      "method": "GET",
+      "path": "/api/v1/public/posts/:post_id/comments",
+      "authentication": "x-api-key (active tenant)",
+      "successStatus": 200,
+      "responseRoot": "array",
+      "significantFields": {
+        "id": "number",
+        "author_name": "string",
+        "content": "string",
+        "created_at": "datetime"
+      },
+      "publication": "status='approved'",
+      "ordering": "created_at ASC",
+      "notes": "Author email and moderation metadata excluded from response."
+    },
+    {
+      "id": "comments.create",
+      "method": "POST",
+      "path": "/api/v1/public/posts/:post_id/comments",
+      "authentication": "x-api-key (active tenant)",
+      "successStatus": 201,
+      "responseRoot": "object",
+      "significantFields": {
+        "message": "string",
+        "id": "number"
+      },
+      "publication": "target post status='published'",
+      "ordering": null,
+      "notes": "JSON body: author_name, author_email, content. Validates a published post in tenant; inserts pending comment. Returns 400 or 404 as applicable."
+    }
+  ],
+  "previewEndpoints": [
+    {
+      "method": "GET",
+      "path": "/api/public/site/:subdomain[/:slug]",
+      "authentication": "none",
+      "tenantResolution": "active tenant subdomain",
+      "responseRoot": "object",
+      "significantFields": {
+        "type": "page|post",
+        "page": "object",
+        "settings": "object",
+        "navPages": "array"
+      },
+      "notes": "Default slug home; published page takes precedence over published post; settings lacks active_template; navPages ordered by page id and are not navbar-filtered."
+    }
+  ]
+}
