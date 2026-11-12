@@ -40,7 +40,7 @@ test('missing FK actions, redundant FKs and incomplete metadata prevent readines
   let result = compareSchemas(source, target);
   assert.equal(result.ready, false);
   assert.ok(result.findings.some(f => f.code === 'foreign_key_actions_unavailable'));
-  assert.ok(result.findings.some(f => f.code === 'redundant_foreign_key'));
+  assert.ok(result.findings.some(f => f.code === 'redundant_target_foreign_key'));
   delete target.tables[0].columns[0].default;
   result = compareSchemas(source, target);
   assert.ok(result.findings.some(f => f.code === 'incomplete_column_metadata'));

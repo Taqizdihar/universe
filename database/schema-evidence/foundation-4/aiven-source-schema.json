@@ -1,0 +1,1991 @@
+{
+  "tables": [
+    {
+      "name": "activity_logs",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "user_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 3,
+          "collation": null
+        },
+        {
+          "name": "actor_name",
+          "type": "varchar(100)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "actor_role",
+          "type": "varchar(50)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "action",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 6,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "status",
+          "type": "varchar(50)",
+          "nullable": true,
+          "default": "SUCCESS",
+          "ordinal": 7,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 8,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "idx_created",
+          "columns": [
+            "created_at"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "idx_tenant",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        }
+      ],
+      "foreignKeys": []
+    },
+    {
+      "name": "api_keys",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "api_key",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "label",
+          "type": "varchar(100)",
+          "nullable": true,
+          "default": "Main Key",
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 5,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "api_key",
+          "columns": [
+            "api_key"
+          ],
+          "unique": true,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "api_keys_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "comments",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "post_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 3,
+          "collation": null
+        },
+        {
+          "name": "author_name",
+          "type": "varchar(255)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "author_email",
+          "type": "varchar(255)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "ordinal": 6,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "status",
+          "type": "enum('pending','approved','spam')",
+          "nullable": true,
+          "default": "pending",
+          "ordinal": 7,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 8,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "post_id",
+          "columns": [
+            "post_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "comments_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "comments_ibfk_2",
+          "columns": [
+            "post_id"
+          ],
+          "referencedTable": "posts",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "contact_inquiries",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "name",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "email",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "subject",
+          "type": "varchar(255)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "message",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "ordinal": 6,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "status",
+          "type": "enum('unread','read')",
+          "nullable": true,
+          "default": "unread",
+          "ordinal": 7,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 8,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "contact_inquiries_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "global_faqs",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "question",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "answer",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "category",
+          "type": "varchar(50)",
+          "nullable": true,
+          "default": "Umum",
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "priority",
+          "type": "int",
+          "nullable": true,
+          "default": "1",
+          "ordinal": 5,
+          "collation": null
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 6,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        }
+      ],
+      "foreignKeys": []
+    },
+    {
+      "name": "layouts",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "page_identifier",
+          "type": "varchar(100)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "blocks_order",
+          "type": "longtext",
+          "nullable": true,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 5,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "layouts_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "media",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "filename",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "file_url",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "file_type",
+          "type": "varchar(50)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "file_size",
+          "type": "int",
+          "nullable": true,
+          "default": "0",
+          "ordinal": 6,
+          "collation": null
+        },
+        {
+          "name": "uploaded_by",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 7,
+          "collation": null
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 8,
+          "collation": null
+        },
+        {
+          "name": "file_name",
+          "type": "varchar(255)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 9,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "folder_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 10,
+          "collation": null
+        },
+        {
+          "name": "status",
+          "type": "varchar(50)",
+          "nullable": true,
+          "default": "ready",
+          "ordinal": 11,
+          "collation": "utf8mb4_0900_ai_ci"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "fk_media_folder",
+          "columns": [
+            "folder_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "uploaded_by",
+          "columns": [
+            "uploaded_by"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "fk_media_folder",
+          "columns": [
+            "folder_id"
+          ],
+          "referencedTable": "media_folders",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "media_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "media_ibfk_2",
+          "columns": [
+            "uploaded_by"
+          ],
+          "referencedTable": "users",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "media_folders",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "name",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "parent_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 4,
+          "collation": null
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 5,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "parent_id",
+          "columns": [
+            "parent_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "media_folders_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "media_folders_ibfk_2",
+          "columns": [
+            "parent_id"
+          ],
+          "referencedTable": "media_folders",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "notifications",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "user_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": null
+        },
+        {
+          "name": "type",
+          "type": "enum('invitation','system_update','alert')",
+          "nullable": true,
+          "default": "invitation",
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "message",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "is_read",
+          "type": "tinyint(1)",
+          "nullable": true,
+          "default": "0",
+          "ordinal": 6,
+          "collation": null
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 7,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "user_id",
+          "columns": [
+            "user_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "notifications_ibfk_1",
+          "columns": [
+            "user_id"
+          ],
+          "referencedTable": "users",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "notifications_ibfk_2",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "pages",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "title",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "slug",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "content",
+          "type": "longtext",
+          "nullable": true,
+          "default": null,
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "status",
+          "type": "varchar(50)",
+          "nullable": true,
+          "default": "hidden",
+          "ordinal": 6,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "author_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 7,
+          "collation": null
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 8,
+          "collation": null
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 9,
+          "collation": null
+        },
+        {
+          "name": "is_in_navbar",
+          "type": "tinyint(1)",
+          "nullable": true,
+          "default": "0",
+          "ordinal": 10,
+          "collation": null
+        },
+        {
+          "name": "priority",
+          "type": "int",
+          "nullable": true,
+          "default": "0",
+          "ordinal": 11,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "author_id",
+          "columns": [
+            "author_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "pages_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "pages_ibfk_2",
+          "columns": [
+            "author_id"
+          ],
+          "referencedTable": "users",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "plugins",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "name",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "is_active",
+          "type": "tinyint(1)",
+          "nullable": true,
+          "default": "0",
+          "ordinal": 5,
+          "collation": null
+        },
+        {
+          "name": "config",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "ordinal": 6,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 7,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        }
+      ],
+      "foreignKeys": []
+    },
+    {
+      "name": "post_categories",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "name",
+          "type": "varchar(100)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "slug",
+          "type": "varchar(100)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 5,
+          "collation": null
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 6,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "idx_tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        }
+      ],
+      "foreignKeys": []
+    },
+    {
+      "name": "posts",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "title",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "slug",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "template_type",
+          "type": "varchar(100)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "category_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 6,
+          "collation": null
+        },
+        {
+          "name": "excerpt",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "ordinal": 7,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "content",
+          "type": "longtext",
+          "nullable": true,
+          "default": null,
+          "ordinal": 8,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "featured_image_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 9,
+          "collation": null
+        },
+        {
+          "name": "status",
+          "type": "enum('draft','published')",
+          "nullable": true,
+          "default": "draft",
+          "ordinal": 10,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "author_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 11,
+          "collation": null
+        },
+        {
+          "name": "published_at",
+          "type": "datetime",
+          "nullable": true,
+          "default": null,
+          "ordinal": 12,
+          "collation": null
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 13,
+          "collation": null
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 14,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "author_id",
+          "columns": [
+            "author_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "featured_image_id",
+          "columns": [
+            "featured_image_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "fk_posts_post_categories",
+          "columns": [
+            "category_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "fk_posts_post_categories",
+          "columns": [
+            "category_id"
+          ],
+          "referencedTable": "post_categories",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "posts_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "posts_ibfk_2",
+          "columns": [
+            "featured_image_id"
+          ],
+          "referencedTable": "media",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "posts_ibfk_3",
+          "columns": [
+            "author_id"
+          ],
+          "referencedTable": "users",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "settings",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": true,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "site_name",
+          "type": "varchar(255)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "logo_url",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "tagline",
+          "type": "varchar(255)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "active_template",
+          "type": "varchar(100)",
+          "nullable": true,
+          "default": "minimalist",
+          "ordinal": 6,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "global_options",
+          "type": "longtext",
+          "nullable": true,
+          "default": null,
+          "ordinal": 7,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 8,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "tenant_id",
+          "columns": [
+            "tenant_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "settings_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "tenant_users",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "tenant_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "user_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": null
+        },
+        {
+          "name": "role",
+          "type": "enum('admin','co_admin','content_creative','guest','super_admin')",
+          "nullable": true,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "status",
+          "type": "enum('pending','active','rejected')",
+          "nullable": true,
+          "default": "pending",
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "invited_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 6,
+          "collation": null
+        },
+        {
+          "name": "last_active_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": null,
+          "ordinal": 7,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "fk_user",
+          "columns": [
+            "user_id"
+          ],
+          "unique": false,
+          "primary": false
+        },
+        {
+          "name": "id",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "tenant_id",
+            "user_id"
+          ],
+          "unique": true,
+          "primary": true
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "fk_tenant",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "fk_user",
+          "columns": [
+            "user_id"
+          ],
+          "referencedTable": "users",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "tenant_users_ibfk_1",
+          "columns": [
+            "tenant_id"
+          ],
+          "referencedTable": "tenants",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        },
+        {
+          "name": "tenant_users_ibfk_2",
+          "columns": [
+            "user_id"
+          ],
+          "referencedTable": "users",
+          "referencedColumns": [
+            "id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "tenants",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "name",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "subdomain",
+          "type": "varchar(100)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "status",
+          "type": "enum('active','suspended')",
+          "nullable": true,
+          "default": "active",
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 5,
+          "collation": null
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 6,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "subdomain",
+          "columns": [
+            "subdomain"
+          ],
+          "unique": true,
+          "primary": false
+        }
+      ],
+      "foreignKeys": []
+    },
+    {
+      "name": "update_history",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "update_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "update_title",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "update_description",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "update_version",
+          "type": "varchar(255)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "update_date",
+          "type": "date",
+          "nullable": true,
+          "default": null,
+          "ordinal": 5,
+          "collation": null
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 6,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "update_id"
+          ],
+          "unique": true,
+          "primary": true
+        }
+      ],
+      "foreignKeys": []
+    },
+    {
+      "name": "update_images",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "update_id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": null
+        },
+        {
+          "name": "image_url",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 4,
+          "collation": null
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        },
+        {
+          "name": "update_id",
+          "columns": [
+            "update_id"
+          ],
+          "unique": false,
+          "primary": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "name": "update_images_ibfk_1",
+          "columns": [
+            "update_id"
+          ],
+          "referencedTable": "update_history",
+          "referencedColumns": [
+            "update_id"
+          ],
+          "onDelete": null,
+          "onUpdate": null
+        }
+      ]
+    },
+    {
+      "name": "users",
+      "collation": "utf8mb4_0900_ai_ci",
+      "engine": "InnoDB",
+      "columns": [
+        {
+          "name": "id",
+          "type": "int",
+          "nullable": false,
+          "default": null,
+          "ordinal": 1,
+          "collation": null
+        },
+        {
+          "name": "name",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 2,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "email",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 3,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "recipient_email",
+          "type": "varchar(255)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 4,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "password_hash",
+          "type": "varchar(255)",
+          "nullable": false,
+          "default": null,
+          "ordinal": 5,
+          "collation": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 6,
+          "collation": null
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "ordinal": 7,
+          "collation": null
+        },
+        {
+          "name": "profile_picture_url",
+          "type": "varchar(255)",
+          "nullable": true,
+          "default": null,
+          "ordinal": 8,
+          "collation": "utf8mb4_0900_ai_ci"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "email",
+          "columns": [
+            "email"
+          ],
+          "unique": true,
+          "primary": false
+        },
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "primary": true
+        }
+      ],
+      "foreignKeys": []
+    }
+  ]
+}

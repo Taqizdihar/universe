@@ -1,0 +1,684 @@
+{
+  "title": "UNI-VERSE Aiven V2 → Kroombox main Schema Compatibility Comparison",
+  "sources": {
+    "source": "Audit Hasil Kueri - Aiven.zip (6 CSV; source database defaultdb, MySQL 8.0.45)",
+    "target": "TABLES.csv (480 schema metadata records, live Kroombox uniin_universe)",
+    "scope": "Schema only; no tenant production data"
+  },
+  "counts": {
+    "aiven_tables": 19,
+    "kroombox_tables": 28,
+    "shared_tables": 19,
+    "aiven_columns": 140,
+    "kroombox_columns": 212,
+    "shared_columns": 140,
+    "matching_non_collation_columns": 140,
+    "source_index_parts": 48,
+    "matching_index_parts": 48,
+    "aiven_foreign_keys": 24,
+    "kroombox_foreign_keys_total": 30,
+    "kroombox_foreign_keys_shared_tables": 22,
+    "differences_column_collations": 62
+  },
+  "shared_table_summary": [
+    {
+      "table": "activity_logs",
+      "aiven_columns": 8,
+      "kroombox_columns": 8,
+      "aiven_index_parts": 3,
+      "kroombox_index_parts": 3,
+      "collation_differences": 4,
+      "aiven_fks": 0,
+      "kroombox_fks": 0
+    },
+    {
+      "table": "api_keys",
+      "aiven_columns": 5,
+      "kroombox_columns": 5,
+      "aiven_index_parts": 3,
+      "kroombox_index_parts": 3,
+      "collation_differences": 2,
+      "aiven_fks": 1,
+      "kroombox_fks": 1
+    },
+    {
+      "table": "comments",
+      "aiven_columns": 8,
+      "kroombox_columns": 8,
+      "aiven_index_parts": 3,
+      "kroombox_index_parts": 3,
+      "collation_differences": 4,
+      "aiven_fks": 2,
+      "kroombox_fks": 2
+    },
+    {
+      "table": "contact_inquiries",
+      "aiven_columns": 8,
+      "kroombox_columns": 8,
+      "aiven_index_parts": 2,
+      "kroombox_index_parts": 2,
+      "collation_differences": 5,
+      "aiven_fks": 1,
+      "kroombox_fks": 1
+    },
+    {
+      "table": "global_faqs",
+      "aiven_columns": 6,
+      "kroombox_columns": 6,
+      "aiven_index_parts": 1,
+      "kroombox_index_parts": 1,
+      "collation_differences": 3,
+      "aiven_fks": 0,
+      "kroombox_fks": 0
+    },
+    {
+      "table": "layouts",
+      "aiven_columns": 5,
+      "kroombox_columns": 5,
+      "aiven_index_parts": 2,
+      "kroombox_index_parts": 2,
+      "collation_differences": 2,
+      "aiven_fks": 1,
+      "kroombox_fks": 1
+    },
+    {
+      "table": "media",
+      "aiven_columns": 11,
+      "kroombox_columns": 11,
+      "aiven_index_parts": 4,
+      "kroombox_index_parts": 4,
+      "collation_differences": 5,
+      "aiven_fks": 3,
+      "kroombox_fks": 3
+    },
+    {
+      "table": "media_folders",
+      "aiven_columns": 5,
+      "kroombox_columns": 5,
+      "aiven_index_parts": 3,
+      "kroombox_index_parts": 3,
+      "collation_differences": 1,
+      "aiven_fks": 2,
+      "kroombox_fks": 2
+    },
+    {
+      "table": "notifications",
+      "aiven_columns": 7,
+      "kroombox_columns": 7,
+      "aiven_index_parts": 3,
+      "kroombox_index_parts": 3,
+      "collation_differences": 2,
+      "aiven_fks": 2,
+      "kroombox_fks": 2
+    },
+    {
+      "table": "pages",
+      "aiven_columns": 11,
+      "kroombox_columns": 11,
+      "aiven_index_parts": 3,
+      "kroombox_index_parts": 3,
+      "collation_differences": 4,
+      "aiven_fks": 2,
+      "kroombox_fks": 2
+    },
+    {
+      "table": "plugins",
+      "aiven_columns": 7,
+      "kroombox_columns": 7,
+      "aiven_index_parts": 1,
+      "kroombox_index_parts": 1,
+      "collation_differences": 3,
+      "aiven_fks": 0,
+      "kroombox_fks": 0
+    },
+    {
+      "table": "post_categories",
+      "aiven_columns": 6,
+      "kroombox_columns": 6,
+      "aiven_index_parts": 2,
+      "kroombox_index_parts": 2,
+      "collation_differences": 2,
+      "aiven_fks": 0,
+      "kroombox_fks": 0
+    },
+    {
+      "table": "posts",
+      "aiven_columns": 14,
+      "kroombox_columns": 14,
+      "aiven_index_parts": 5,
+      "kroombox_index_parts": 5,
+      "collation_differences": 6,
+      "aiven_fks": 4,
+      "kroombox_fks": 4
+    },
+    {
+      "table": "settings",
+      "aiven_columns": 8,
+      "kroombox_columns": 8,
+      "aiven_index_parts": 2,
+      "kroombox_index_parts": 2,
+      "collation_differences": 5,
+      "aiven_fks": 1,
+      "kroombox_fks": 1
+    },
+    {
+      "table": "tenant_users",
+      "aiven_columns": 7,
+      "kroombox_columns": 7,
+      "aiven_index_parts": 4,
+      "kroombox_index_parts": 4,
+      "collation_differences": 2,
+      "aiven_fks": 4,
+      "kroombox_fks": 2
+    },
+    {
+      "table": "tenants",
+      "aiven_columns": 6,
+      "kroombox_columns": 6,
+      "aiven_index_parts": 2,
+      "kroombox_index_parts": 2,
+      "collation_differences": 3,
+      "aiven_fks": 0,
+      "kroombox_fks": 0
+    },
+    {
+      "table": "update_history",
+      "aiven_columns": 6,
+      "kroombox_columns": 6,
+      "aiven_index_parts": 1,
+      "kroombox_index_parts": 1,
+      "collation_differences": 3,
+      "aiven_fks": 0,
+      "kroombox_fks": 0
+    },
+    {
+      "table": "update_images",
+      "aiven_columns": 4,
+      "kroombox_columns": 4,
+      "aiven_index_parts": 2,
+      "kroombox_index_parts": 2,
+      "collation_differences": 1,
+      "aiven_fks": 1,
+      "kroombox_fks": 1
+    },
+    {
+      "table": "users",
+      "aiven_columns": 8,
+      "kroombox_columns": 8,
+      "aiven_index_parts": 2,
+      "kroombox_index_parts": 2,
+      "collation_differences": 5,
+      "aiven_fks": 0,
+      "kroombox_fks": 0
+    }
+  ],
+  "target_only_tables": [
+    "account_auth_state",
+    "migration_asset_map",
+    "migration_batches",
+    "migration_identity_map",
+    "migration_validation_results",
+    "password_reset_tokens",
+    "super_admin_verifications",
+    "user_global_roles",
+    "workspace_compatibility"
+  ],
+  "column_differences": [
+    {
+      "table": "activity_logs",
+      "column": "actor_name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "activity_logs",
+      "column": "actor_role",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "activity_logs",
+      "column": "action",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "activity_logs",
+      "column": "status",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "api_keys",
+      "column": "api_key",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "api_keys",
+      "column": "label",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "comments",
+      "column": "author_name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "comments",
+      "column": "author_email",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "comments",
+      "column": "content",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "comments",
+      "column": "status",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "contact_inquiries",
+      "column": "name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "contact_inquiries",
+      "column": "email",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "contact_inquiries",
+      "column": "subject",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "contact_inquiries",
+      "column": "message",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "contact_inquiries",
+      "column": "status",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "global_faqs",
+      "column": "question",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "global_faqs",
+      "column": "answer",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "global_faqs",
+      "column": "category",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "layouts",
+      "column": "page_identifier",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "layouts",
+      "column": "blocks_order",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "media",
+      "column": "filename",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "media",
+      "column": "file_url",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "media",
+      "column": "file_type",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "media",
+      "column": "file_name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "media",
+      "column": "status",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "media_folders",
+      "column": "name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "notifications",
+      "column": "type",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "notifications",
+      "column": "message",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "pages",
+      "column": "title",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "pages",
+      "column": "slug",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "pages",
+      "column": "content",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "pages",
+      "column": "status",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "plugins",
+      "column": "name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "plugins",
+      "column": "description",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "plugins",
+      "column": "config",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "post_categories",
+      "column": "name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "post_categories",
+      "column": "slug",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "posts",
+      "column": "title",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "posts",
+      "column": "slug",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "posts",
+      "column": "template_type",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "posts",
+      "column": "excerpt",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "posts",
+      "column": "content",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "posts",
+      "column": "status",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "settings",
+      "column": "site_name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "settings",
+      "column": "logo_url",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "settings",
+      "column": "tagline",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "settings",
+      "column": "active_template",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "settings",
+      "column": "global_options",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "tenant_users",
+      "column": "role",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "tenant_users",
+      "column": "status",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "tenants",
+      "column": "name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "tenants",
+      "column": "subdomain",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "tenants",
+      "column": "status",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "update_history",
+      "column": "update_title",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "update_history",
+      "column": "update_description",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "update_history",
+      "column": "update_version",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "update_images",
+      "column": "image_url",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "users",
+      "column": "name",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "users",
+      "column": "email",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "users",
+      "column": "recipient_email",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "users",
+      "column": "password_hash",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    },
+    {
+      "table": "users",
+      "column": "profile_picture_url",
+      "attribute": "COLLATION_NAME",
+      "aiven": "utf8mb4_0900_ai_ci",
+      "kroombox": "utf8mb4_unicode_ci"
+    }
+  ],
+  "source_fks_without_identical_target_constraint": [
+    {
+      "table": "tenant_users",
+      "name": "tenant_users_ibfk_1",
+      "column": "tenant_id",
+      "referenced_table": "tenants",
+      "referenced_column": "id"
+    },
+    {
+      "table": "tenant_users",
+      "name": "tenant_users_ibfk_2",
+      "column": "user_id",
+      "referenced_table": "users",
+      "referenced_column": "id"
+    }
+  ],
+  "limitations": [
+    "Aiven export omits FK ON DELETE/ON UPDATE rules; do not assume identical.",
+    "No production data rows or counts; ID/email/API key/slug/asset collisions unknown.",
+    "Frontend consumers and URL routing are not included in schema metadata.",
+    "Schema comparison does not validate storage, availability or migration readiness."
+  ]
+}

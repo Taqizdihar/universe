@@ -1,10 +1,13 @@
-// Pure, offline schema comparison. Inputs are administrator-exported metadata, never table rows.
+// Offline schema comparison. Inputs are administrator-exported metadata, never table rows.
+const fs = require('node:fs');
+const crypto = require('node:crypto');
 const levels = ['compatible', 'compatible_with_transformation', 'requires_review', 'blocking'];
 const sort = rows => rows.sort((a, b) => `${a.object}:${a.code}`.localeCompare(`${b.object}:${b.code}`));
 const key = value => String(value || '').toLowerCase();
 const has = (object, field) => Object.prototype.hasOwnProperty.call(object, field);
 
-function compareSchemas(source, target) {
+function compareSchemas(source, target, options = {}) {
+    if (Object.keys(options).some(key => key !== 'resolutions') || (options.resolutions != null && !Array.isArray(options.resolutions))) throw TypeError('Unsupported schema comparison override.');
     if (!Array.isArray(source?.tables) || !Array.isArray(target?.tables)) throw TypeError('Both schema table inventories are required.');
     const findings = [];
     const add = (object, code, classification) => findings.push({ object, code, classification });
@@ -49,18 +52,41 @@ function compareSchemas(source, target) {
         for (const side of [sourceTable, targetTable]) for (const fk of side.foreignKeys || []) {
             if (!fk.name || !Array.isArray(fk.columns) || !fk.referencedTable || !Array.isArray(fk.referencedColumns)) add(name, 'incomplete_foreign_key_metadata', 'blocking');
         }
+        const seenFkSignatures = new Set();
         for (const fk of sourceTable.foreignKeys || []) {
             const path = `${name}.${fk.name}`;
             const other = targetFks.find(candidate => fkSignature(candidate) === fkSignature(fk));
             if (!other) { add(path, 'missing_target_foreign_key', 'blocking'); continue; }
+            if (fk.name !== other.name) add(path, 'equivalent_foreign_key_different_name', 'compatible');
             if (!fk.onDelete || !fk.onUpdate || !other.onDelete || !other.onUpdate) add(path, 'foreign_key_actions_unavailable', 'requires_review');
             else if (key(fk.onDelete) !== key(other.onDelete) || key(fk.onUpdate) !== key(other.onUpdate)) add(path, 'foreign_key_action_difference', 'blocking');
-            if (targetFks.filter(candidate => fkSignature(candidate) === fkSignature(fk)).length > 1 || (sourceTable.foreignKeys || []).filter(candidate => fkSignature(candidate) === fkSignature(fk)).length > 1) add(path, 'redundant_foreign_key', 'requires_review');
+            if (seenFkSignatures.has(fkSignature(fk))) add(path, 'redundant_foreign_key', 'requires_review');
+            seenFkSignatures.add(fkSignature(fk));
+        }
+        const seenTargetFkSignatures = new Set();
+        for (const fk of targetFks) {
+            if (seenTargetFkSignatures.has(fkSignature(fk))) add(`${name}.${fk.name}`, 'redundant_target_foreign_key', 'requires_review');
+            seenTargetFkSignatures.add(fkSignature(fk));
         }
         for (const fk of targetFks) if (!(sourceTable.foreignKeys || []).some(candidate => fkSignature(candidate) === fkSignature(fk))) add(`${name}.${fk.name}`, 'extra_target_foreign_key', 'requires_review');
     }
     for (const table of target.tables) if (!seenSource.has(key(table.name))) add(table.name, 'extra_target_table', 'compatible');
-    const counts = Object.fromEntries(levels.map(level => [level, findings.filter(f => f.classification === level).length]));
+    const resolutions = options.resolutions || [];
+    for (const resolution of resolutions) {
+        if (resolution?.code !== 'redundant_foreign_key' || resolution.decision !== 'accepted_redundant' || !resolution.object || !resolution.evidenceFile || !fs.existsSync(resolution.evidenceFile) || !fs.statSync(resolution.evidenceFile).isFile() || !/^[a-f0-9]{64}$/i.test(resolution.evidenceSha256 || '') || crypto.createHash('sha256').update(fs.readFileSync(resolution.evidenceFile)).digest('hex') !== resolution.evidenceSha256.toLowerCase() || !resolution.reviewedAt || !Number.isFinite(Date.parse(resolution.reviewedAt)) || resolution.administratorReviewStatus !== 'approved') throw TypeError('Unsupported or incomplete review resolution.');
+        let reviewDocument;
+        try { reviewDocument = JSON.parse(fs.readFileSync(resolution.evidenceFile, 'utf8')); } catch { throw TypeError('FK review evidence must be JSON.'); }
+        if (!reviewDocument.reviewedRedundantFks?.includes(resolution.object)) throw TypeError('FK resolution is absent from evidence file.');
+        const finding = findings.find(f => f.code === resolution.code && f.object === resolution.object);
+        if (!finding || finding.resolved) throw TypeError('Resolution has no unique unresolved finding.');
+        const [tableName, fkName] = resolution.object.split('.');
+        const sourceFk = source.tables.find(t => t.name === tableName)?.foreignKeys.find(fk => fk.name === fkName);
+        const targetFk = target.tables.find(t => t.name === tableName)?.foreignKeys.find(fk => fk.columns?.join(',') === sourceFk?.columns?.join(',') && fk.referencedTable === sourceFk?.referencedTable && fk.referencedColumns?.join(',') === sourceFk?.referencedColumns?.join(','));
+        if (!sourceFk?.onDelete || !sourceFk?.onUpdate || !targetFk?.onDelete || !targetFk?.onUpdate || key(sourceFk.onDelete) !== key(targetFk.onDelete) || key(sourceFk.onUpdate) !== key(targetFk.onUpdate)) throw TypeError('FK actions must be independently verified before resolution.');
+        finding.resolved = true;
+        finding.resolutionEvidence = resolution.evidenceFile;
+    }
+    const counts = Object.fromEntries(levels.map(level => [level, findings.filter(f => f.classification === level && !f.resolved).length]));
     return { ready: source.tables.length > 0 && counts.blocking === 0 && counts.requires_review === 0, counts, findings: sort(findings) };
 }
 
