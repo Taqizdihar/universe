@@ -23,7 +23,7 @@ test('SQL package creates only empty metadata tables in dependency order', () =>
 });
 
 test('preflight, verification and audit packages contain read-only SQL', () => {
-  for (const file of [path.join(root, 'foundation-2.preflight.sql'), path.join(root, 'foundation-2.verify.sql'), path.join(__dirname, '../../database/audit/aiven-v2-schema.sql'), path.join(__dirname, '../../database/audit/kroombox-target-schema.sql')]) {
+  for (const file of [path.join(root, 'foundation-2.preflight.sql'), path.join(root, 'foundation-2.verify.sql'), path.join(__dirname, '../../database/audit/aiven-v2-schema.sql'), path.join(__dirname, '../../database/audit/kroombox-target-schema.sql'), path.join(__dirname, '../../database/audit/foreign-key-actions.sql')]) {
     const source = uncomment(fs.readFileSync(file, 'utf8'));
     assert.match(source, /information_schema/i);
     assert.doesNotMatch(source, /\b(?:INSERT|UPDATE|DELETE|TRUNCATE|DROP|ALTER|REPLACE|CREATE)\s+(?:TABLE|FROM|INTO|[a-z_]+\s+SET)\b/i);

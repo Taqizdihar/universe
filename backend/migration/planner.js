@@ -5,7 +5,8 @@ const entities = Object.freeze({
     post_categories: ['tenants'], settings: ['tenants'], layouts: ['tenants'],
     pages: ['tenants', 'users'], posts: ['tenants', 'users', 'post_categories', 'media'],
     comments: ['tenants', 'posts'], contact_inquiries: ['tenants'], notifications: ['tenants', 'users'],
-    activity_logs: ['tenants', 'users'], plugins: ['tenants'], global_faqs: []
+    activity_logs: ['tenants', 'users'], plugins: ['tenants'], global_faqs: [],
+    update_history: [], update_images: ['update_history'], super_admin_verifications: ['users']
 });
 const origins = new Set(['aiven_v2', 'kroombox_native', 'manual_import']);
 const modes = new Set(['legacy_compatible', 'hybrid', 'native_v2']);
@@ -84,20 +85,26 @@ function planMigration({ batchId, sourceSystem, targetEnvironment, source = {}, 
         sourceIds.set(entity, ids);
     }
     const sourceEmails = new Set();
+    const emailIdentity = user => user.emailFingerprint || (typeof user.email === 'string' ? user.email.trim().toLowerCase() : null);
     const targetSuperAdmins = new Set((target.user_global_roles || []).filter(r => r.role === 'super_admin').map(r => id(r.user_id)));
     for (const sourceUser of sourceUsers) {
         const sid = id(sourceUser.id);
-        const numeric = targetUsers.find(user => id(user.id) === sid && user.email !== sourceUser.email);
+        const numeric = targetUsers.find(user => id(user.id) === sid && emailIdentity(user) !== emailIdentity(sourceUser));
         if (numeric) add('users', sid, 'numeric_id_collision');
-        if (targetUsers.some(user => user.email && sourceUser.email && user.email.toLowerCase() === sourceUser.email.toLowerCase())) add('users', sid, 'email_match_requires_review');
-        if (sourceUser.email) {
-            const email = sourceUser.email.toLowerCase();
+        if (emailIdentity(sourceUser) && targetUsers.some(user => emailIdentity(user) === emailIdentity(sourceUser))) add('users', sid, 'email_match_requires_review');
+        if (emailIdentity(sourceUser)) {
+            const email = emailIdentity(sourceUser);
             if (sourceEmails.has(email)) add('users', sid, 'duplicate_source_email');
             sourceEmails.add(email);
         }
     }
-    for (const tenant of source.tenants || []) if ((target.tenants || []).some(t => t.subdomain?.toLowerCase() === tenant.subdomain?.toLowerCase())) add('tenants', id(tenant.id), 'subdomain_collision');
-    for (const key of source.api_keys || []) if (key.fingerprint && (target.api_keys || []).some(k => k.fingerprint === key.fingerprint)) add('api_keys', id(key.id), 'api_key_collision');
+    for (const tenant of source.tenants || []) if (tenant.subdomain && (target.tenants || []).some(t => t.subdomain?.trim().toLowerCase() === tenant.subdomain?.trim().toLowerCase())) add('tenants', id(tenant.id), 'subdomain_collision');
+    const sourceKeyFingerprints = new Set();
+    for (const key of source.api_keys || []) {
+        if (key.fingerprint && (target.api_keys || []).some(k => k.fingerprint === key.fingerprint)) add('api_keys', id(key.id), 'api_key_collision');
+        if (key.fingerprint && sourceKeyFingerprints.has(key.fingerprint)) add('api_keys', id(key.id), 'duplicate_source_api_key_fingerprint');
+        if (key.fingerprint) sourceKeyFingerprints.add(key.fingerprint);
+    }
     const tenantMapping = new Map(mappings.filter(m => m.entity === 'tenants').map(m => [id(m.sourceId), id(m.targetId)]));
     const userMapping = new Map(mappings.filter(m => m.entity === 'users').map(m => [id(m.sourceId), id(m.targetId)]));
     for (const mapping of mappings) {
@@ -106,6 +113,10 @@ function planMigration({ batchId, sourceSystem, targetEnvironment, source = {}, 
         const targetKey = mapping.targetId == null ? null : `${mapping.entity}:${id(mapping.targetId)}`;
         if (seenSource.has(sourceKey)) add(mapping.entity, mapping.sourceId, 'duplicate_source_mapping');
         if (!sourceIds.get(mapping.entity)?.has(id(mapping.sourceId))) add(mapping.entity, mapping.sourceId, 'missing_source_record');
+        const sourceRow = (source[mapping.entity] || []).find(row => id(row.id) === id(mapping.sourceId));
+        if (sourceRow?.tenant_id != null && mapping.sourceTenantId != null && id(sourceRow.tenant_id) !== id(mapping.sourceTenantId)) add(mapping.entity, mapping.sourceId, 'source_tenant_identity_mismatch');
+        if (mapping.entity === 'tenant_users' && sourceRow?.user_id != null && id(sourceRow.user_id) !== id(mapping.sourceUserId)) add(mapping.entity, mapping.sourceId, 'source_user_identity_mismatch');
+        if (mapping.entity === 'tenant_users' && mapping.targetUserId != null && userMapping.get(id(mapping.sourceUserId)) !== id(mapping.targetUserId)) add(mapping.entity, mapping.sourceId, 'target_user_identity_mismatch');
         if (targetKey && seenTarget.has(targetKey)) add(mapping.entity, mapping.sourceId, 'duplicate_target_mapping');
         seenSource.add(sourceKey); if (targetKey) seenTarget.add(targetKey);
         if (mapping.entity === 'users' && targetSuperAdmins.has(id(mapping.targetId))) add('users', mapping.sourceId, 'protected_super_admin');
@@ -122,9 +133,15 @@ function planMigration({ batchId, sourceSystem, targetEnvironment, source = {}, 
     }
     const sourceTenantIds = new Set((source.tenants || []).map(t => id(t.id)));
     const sourceUserIds = new Set(sourceUsers.map(u => id(u.id)));
+    const membershipPairs = new Set();
     const referenceFields = { posts: [['category_id', 'post_categories'], ['featured_image_id', 'media'], ['author_id', 'users']], pages: [['author_id', 'users']], comments: [['post_id', 'posts']], media: [['folder_id', 'media_folders'], ['uploaded_by', 'users']], notifications: [['user_id', 'users']] };
     for (const [entity, rows] of Object.entries(source)) {
         for (const row of rows) {
+            if (entity === 'tenant_users') {
+                const pair = `${id(row.tenant_id)}:${id(row.user_id)}`;
+                if (membershipPairs.has(pair)) add(entity, row.id, 'duplicate_membership');
+                membershipPairs.add(pair);
+            }
             if (row.tenant_id != null && !sourceTenantIds.has(id(row.tenant_id))) add(entity, row.id ?? `${row.tenant_id}:${row.user_id}`, 'missing_tenant_reference');
             if (row.user_id != null && !sourceUserIds.has(id(row.user_id))) add(entity, row.id ?? `${row.tenant_id}:${row.user_id}`, 'missing_user_reference');
             for (const [field, relatedEntity] of referenceFields[entity] || []) {

@@ -76,6 +76,15 @@ test('cross-tenant content, global roles and absent mapping identities require r
   assert.equal(input.source.tenant_users.length, 2);
   assert.equal(p.planMigration(input).status, 'needs_review');
 });
+test('API key fingerprints and membership identities cannot silently collide', () => {
+  const input = sample();
+  input.source.api_keys.push({ id: 6, tenant_id: 1, fingerprint: 'test-fingerprint-a' });
+  input.source.tenant_users.push({ id: 9, tenant_id: 1, user_id: 1, role: 'guest' });
+  input.mappings[2].sourceTenantId = 99;
+  input.mappings[2].sourceUserId = 99;
+  const types = p.planMigration(input).conflicts.map(c => c.type);
+  for (const type of ['duplicate_source_api_key_fingerprint', 'duplicate_membership', 'source_tenant_identity_mismatch', 'source_user_identity_mismatch']) assert.ok(types.includes(type), type);
+});
 test('source identities and recovery data cannot be smuggled into a plan', () => {
   const input = sample();
   input.source.users[0].id = -1;
