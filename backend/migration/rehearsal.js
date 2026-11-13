@@ -1,5 +1,6 @@
 const { entities, dependencyOrder, planMigration } = require('./planner');
 const { compareSchemas } = require('./schemaMapping');
+const { evaluatePostSlugs, planLegacyPostCompatibility } = require('./legacyExceptions');
 
 const protectedTables = new Set(['super_admin_verifications', 'account_auth_state', 'password_reset_tokens']);
 const platformTables = new Set(['global_faqs', 'plugins', 'update_history', 'update_images']);
@@ -28,7 +29,7 @@ function assessRehearsal(input) {
     if (Array.isArray(legacyTables) && (legacyTables.some(table => !(input.sourceSchema?.tables || []).some(t => t.name === table)) || (input.sourceSchema?.tables || []).length !== legacyTables.length)) add(blockers, 'schema', '-', 'schema_roster_mismatch');
     const steps = generateDependencyPlan(legacyTables || []);
     for (const table of legacyTables || []) if (!Array.isArray(source[table])) add(blockers, table, '-', 'missing_source_inventory');
-    const plan = planMigration({ batchId: input.batchId, sourceSystem: input.sourceSystem, targetEnvironment: input.targetEnvironment, source, target, mappings, validationResults });
+    const plan = planMigration({ batchId: input.batchId, sourceSystem: input.sourceSystem, targetEnvironment: input.targetEnvironment, source, target, mappings, validationResults, identityEquivalences: input.identityEquivalences || [], decisionContext: input.slugContext || {} });
     for (const conflict of plan.conflicts) add(blockers, conflict.entity, conflict.sourceId, conflict.type);
     const mapped = new Set(mappings.map(m => `${m.entity}:${m.sourceId}`));
     for (const [entity, rows] of Object.entries(source)) {
@@ -38,13 +39,22 @@ function assessRehearsal(input) {
             if (Number(row.nestedMediaReferenceCount || 0) > 0) add(review, entity, row.id, 'nested_media_reference_review');
         }
     }
-    for (const entity of ['pages', 'posts']) {
+    for (const entity of ['pages']) {
         const slugs = new Set();
         for (const row of source[entity] || []) {
             if (!row.slug) continue;
             const key = `${row.tenant_id}:${value(row.slug)}`;
             if (slugs.has(key)) add(blockers, entity, row.id, 'duplicate_tenant_slug');
             slugs.add(key);
+        }
+    }
+    const postSlugFindings = evaluatePostSlugs(source.posts || [], input.decisions || [], input.slugContext || {});
+    for (const finding of postSlugFindings) {
+        if (!finding.approved) add(blockers, 'posts', finding.sourceIds.join(','), 'duplicate_tenant_slug');
+        if (finding.apiDetailReviewRequired) {
+            const observation = (input.legacyApiObservations || []).find(item => JSON.stringify(item.sourceIds?.map(String).sort()) === JSON.stringify(finding.sourceIds));
+            const decision = (input.decisions || []).find(item => item.findingType === 'legacy_api_ambiguity' && JSON.stringify(item.sourceIds?.map(String).sort()) === JSON.stringify(finding.sourceIds));
+            if (planLegacyPostCompatibility(finding, observation, decision, input.slugContext || {}).status !== 'reviewed_for_rehearsal') add(review, 'posts', finding.sourceIds.join(','), 'legacy_api_detail_ambiguity');
         }
     }
     for (const entity of ['users', 'tenants']) {
@@ -66,7 +76,7 @@ function assessRehearsal(input) {
         batchId: plan.batchId, status: blockers.length || review.length ? 'no_go' : 'ready_for_administrator_review',
         go: blockers.length === 0 && review.length === 0,
         blockers: order(blockers), review: order(review), steps,
-        counts: plan.entities, validation: plan.validation
+        counts: plan.entities, validation: plan.validation, postSlugFindings, verifiedExistingIdentities: plan.verifiedExistingIdentities
     };
 }
 

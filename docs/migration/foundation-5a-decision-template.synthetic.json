@@ -1,0 +1,18 @@
+[
+  {
+    "decisionId": "synthetic-cross-template-001",
+    "sourceEntity": "posts",
+    "sourceIds": ["9001", "9002"],
+    "workspaceId": "501",
+    "findingType": "cross_template_published",
+    "action": "preserve_all_with_api_review",
+    "matchMode": "exact",
+    "schemaCollation": "utf8mb4_unicode_ci",
+    "sourceSnapshotFingerprint": "synthetic-source-snapshot",
+    "targetSnapshotFingerprint": "synthetic-target-snapshot",
+    "evidenceFile": "/protected/local/synthetic-review.json",
+    "evidenceSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "reviewedAt": "2026-11-13T00:00:00Z",
+    "administratorReviewStatus": "pending"
+  }
+]

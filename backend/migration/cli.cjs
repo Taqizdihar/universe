@@ -10,7 +10,7 @@ const args = Object.fromEntries(process.argv.slice(2).filter(arg => arg.startsWi
     const split = arg.indexOf('='); return [arg.slice(2, split), arg.slice(split + 1)];
 }));
 if (process.argv.includes('--help')) {
-    process.stdout.write('node backend/migration/cli.cjs [--source=FILE --target=FILE --reference=FILE --source-fk-actions=FILE --source-counts=FILE --target-counts=FILE --evidence=FILE --mapping-evidence=FILE --resolutions=FILE --out=FILE]\nAll files are local JSON. No SQL is executed.\n');
+    process.stdout.write('node backend/migration/cli.cjs [--source=FILE --target=FILE --reference=FILE --source-fk-actions=FILE --source-counts=FILE --target-counts=FILE --evidence=FILE --mapping-evidence=FILE --resolutions=FILE --legacy-inventory=FILE --legacy-decisions=FILE --legacy-api-observations=FILE --out=FILE]\nAll files are local JSON. No SQL is executed.\n');
     process.exit(0);
 }
 const file = (name, fallback) => path.resolve(args[name] || path.join(root, fallback));
@@ -23,7 +23,8 @@ try {
         reference: loadJson(file('reference', 'UNI-VERSE_schema_comparison.json')),
         sourceFile: path.basename(sourceFile), targetFile: path.basename(targetFile),
         sourceFkActions: optional('source-fk-actions'), sourceCounts: optional('source-counts'), targetCounts: optional('target-counts'),
-        evidence: optional('evidence'), mappingEvidence: optional('mapping-evidence'), resolutions: optional('resolutions')
+        evidence: optional('evidence'), mappingEvidence: optional('mapping-evidence'), resolutions: optional('resolutions'),
+        legacyInventory: optional('legacy-inventory'), legacyDecisions: optional('legacy-decisions'), legacyApiObservations: optional('legacy-api-observations')
     });
     if (args.out) fs.writeFileSync(path.resolve(args.out), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
     process.stdout.write(`${report.status}: ${report.schema.summary}\nMissing evidence: ${report.missingEvidence.length}; unresolved reviews: ${report.reviews.length}; blockers: ${report.blockers.join(', ') || 'none'}\n`);

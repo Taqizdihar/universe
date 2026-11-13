@@ -1,4 +1,5 @@
 // Offline planning only. No DB imports, SQL executor, network calls, or writes.
+const { verifyDecision } = require('./decisions');
 const entities = Object.freeze({
     users: [], tenants: [], tenant_users: ['users', 'tenants'], user_global_roles: ['users'],
     api_keys: ['tenants'], media_folders: ['tenants'], media: ['tenants', 'media_folders', 'users'],
@@ -64,9 +65,9 @@ function rejectSecrets(input) {
     };
     visit(input);
 }
-function planMigration({ batchId, sourceSystem, targetEnvironment, source = {}, target = {}, mappings = [], validationResults = [] }) {
+function planMigration({ batchId, sourceSystem, targetEnvironment, source = {}, target = {}, mappings = [], validationResults = [], identityEquivalences = [], decisionContext = {} }) {
     if (!id(batchId) || !origins.has(sourceSystem) || !['kroombox_development', 'kroombox_staging', 'kroombox_production'].includes(targetEnvironment)) throw TypeError('Invalid batch identity.');
-    rejectSecrets({ source, target, mappings });
+    rejectSecrets({ source, target, mappings, identityEquivalences });
     for (const [entity, rows] of Object.entries({ ...source, ...target })) {
         if (!Object.hasOwn(entities, entity) || !Array.isArray(rows)) throw TypeError('Unknown or invalid inventory.');
     }
@@ -87,11 +88,25 @@ function planMigration({ batchId, sourceSystem, targetEnvironment, source = {}, 
     const sourceEmails = new Set();
     const emailIdentity = user => user.emailFingerprint || (typeof user.email === 'string' ? user.email.trim().toLowerCase() : null);
     const targetSuperAdmins = new Set((target.user_global_roles || []).filter(r => r.role === 'super_admin').map(r => id(r.user_id)));
+    const approvedExisting = new Set();
+    for (const mapping of mappings.filter(m => m.entity === 'users' && m.mode === 'verified_existing')) {
+        const sourceUser = sourceUsers.find(user => id(user.id) === id(mapping.sourceId));
+        const targetUser = targetUsers.find(user => id(user.id) === id(mapping.targetId));
+        const decision = identityEquivalences.find(item => item.findingType === 'verified_existing_identity' && Array.isArray(item.sourceIds) && item.sourceIds.map(id).includes(id(mapping.sourceId)) && id(item.targetId) === id(mapping.targetId));
+        const membership = (source.tenant_users || []).some(row => id(row.user_id) === id(mapping.sourceId) && id(row.tenant_id) === id(mapping.sourceTenantId) && row.status === 'active');
+        if (targetSuperAdmins.has(id(mapping.targetId)) && sourceUser?.emailFingerprint && targetUser?.emailFingerprint && membership && mapping.credentialPolicy === 'preserve_target' && mapping.globalRolePolicy === 'no_import' && decision && verifyDecision(decision, {
+            sourceEntity: 'users', sourceIds: [id(mapping.sourceId)], workspaceId: id(mapping.sourceTenantId), targetId: id(mapping.targetId),
+            findingType: 'verified_existing_identity', action: 'map_to_existing_without_credential_change',
+            sourceFingerprint: sourceUser.emailFingerprint, targetFingerprint: targetUser.emailFingerprint,
+            schemaCollation: decisionContext.schemaCollation, sourceSnapshotFingerprint: decisionContext.sourceSnapshotFingerprint,
+            targetSnapshotFingerprint: decisionContext.targetSnapshotFingerprint
+        })) approvedExisting.add(id(mapping.sourceId));
+    }
     for (const sourceUser of sourceUsers) {
         const sid = id(sourceUser.id);
         const numeric = targetUsers.find(user => id(user.id) === sid && emailIdentity(user) !== emailIdentity(sourceUser));
-        if (numeric) add('users', sid, 'numeric_id_collision');
-        if (emailIdentity(sourceUser) && targetUsers.some(user => emailIdentity(user) === emailIdentity(sourceUser))) add('users', sid, 'email_match_requires_review');
+        if (numeric && !approvedExisting.has(sid)) add('users', sid, 'numeric_id_collision');
+        if (emailIdentity(sourceUser) && targetUsers.some(user => emailIdentity(user) === emailIdentity(sourceUser)) && !approvedExisting.has(sid)) add('users', sid, 'email_match_requires_review');
         if (emailIdentity(sourceUser)) {
             const email = emailIdentity(sourceUser);
             if (sourceEmails.has(email)) add('users', sid, 'duplicate_source_email');
@@ -109,6 +124,7 @@ function planMigration({ batchId, sourceSystem, targetEnvironment, source = {}, 
     const userMapping = new Map(mappings.filter(m => m.entity === 'users').map(m => [id(m.sourceId), id(m.targetId)]));
     for (const mapping of mappings) {
         if (!Object.hasOwn(entities, mapping.entity) || !id(mapping.sourceId) || (mapping.targetId != null && !id(mapping.targetId))) throw TypeError('Invalid explicit mapping.');
+        if (mapping.mode === 'verified_existing' && (mapping.entity !== 'users' || !approvedExisting.has(id(mapping.sourceId)))) add(mapping.entity, mapping.sourceId, 'unverified_existing_identity_mapping');
         const sourceKey = `${mapping.entity}:${id(mapping.sourceId)}`;
         const targetKey = mapping.targetId == null ? null : `${mapping.entity}:${id(mapping.targetId)}`;
         if (seenSource.has(sourceKey)) add(mapping.entity, mapping.sourceId, 'duplicate_source_mapping');
@@ -119,8 +135,8 @@ function planMigration({ batchId, sourceSystem, targetEnvironment, source = {}, 
         if (mapping.entity === 'tenant_users' && mapping.targetUserId != null && userMapping.get(id(mapping.sourceUserId)) !== id(mapping.targetUserId)) add(mapping.entity, mapping.sourceId, 'target_user_identity_mismatch');
         if (targetKey && seenTarget.has(targetKey)) add(mapping.entity, mapping.sourceId, 'duplicate_target_mapping');
         seenSource.add(sourceKey); if (targetKey) seenTarget.add(targetKey);
-        if (mapping.entity === 'users' && targetSuperAdmins.has(id(mapping.targetId))) add('users', mapping.sourceId, 'protected_super_admin');
-        if ((target[mapping.entity] || []).some(row => id(row.id) === id(mapping.targetId)) && !(mapping.entity === 'users' && targetSuperAdmins.has(id(mapping.targetId)))) add(mapping.entity, mapping.sourceId, 'target_id_occupied_requires_review');
+        if (mapping.entity === 'users' && targetSuperAdmins.has(id(mapping.targetId)) && !approvedExisting.has(id(mapping.sourceId))) add('users', mapping.sourceId, 'protected_super_admin');
+        if ((target[mapping.entity] || []).some(row => id(row.id) === id(mapping.targetId)) && !(mapping.entity === 'users' && approvedExisting.has(id(mapping.sourceId)))) add(mapping.entity, mapping.sourceId, 'target_id_occupied_requires_review');
         if (mapping.entity === 'user_global_roles') add('user_global_roles', mapping.sourceId, 'global_role_requires_review');
         if (mapping.sourceTenantId != null && mapping.targetTenantId != null && tenantMapping.has(id(mapping.sourceTenantId)) && tenantMapping.get(id(mapping.sourceTenantId)) !== id(mapping.targetTenantId)) add(mapping.entity, mapping.sourceId, 'cross_tenant_mapping');
         if (mapping.sourceTenantId != null && !tenantMapping.has(id(mapping.sourceTenantId))) add(mapping.entity, mapping.sourceId, 'missing_tenant_mapping');
@@ -156,7 +172,7 @@ function planMigration({ batchId, sourceSystem, targetEnvironment, source = {}, 
     }
     const validation = summarizeValidations(validationResults);
     const entitiesCount = Object.fromEntries(Object.keys(source).sort().map(entity => [entity, source[entity].length]));
-    const report = { batchId, source: sourceSystem, target: targetEnvironment, status: 'needs_review', entities: entitiesCount, dependencyOrder: dependencyOrder(Object.keys(source)), conflicts: sorted(conflicts), validation };
+    const report = { batchId, source: sourceSystem, target: targetEnvironment, status: 'needs_review', entities: entitiesCount, dependencyOrder: dependencyOrder(Object.keys(source)), conflicts: sorted(conflicts), validation, verifiedExistingIdentities: [...approvedExisting].sort() };
     if (!conflicts.length && validation.ready && mappings.length > 0) report.status = 'ready_for_administrator_review';
     return report;
 }

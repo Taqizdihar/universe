@@ -103,8 +103,12 @@ test('synthetic complete evidence distinguishes review from rehearsal readiness'
     return { TABLE_NAME: table.name, CONSTRAINT_NAME: fk.name, on_delete: counterpart.onDelete, on_update: counterpart.onUpdate };
   }));
   const sourceCounts = Object.fromEntries(base.sourceSchema.tables.map(t => [t.name, 0]));
+  sourceCounts.tenants = 1;
+  sourceCounts.settings = 1;
   const targetCounts = Object.fromEntries(base.targetSchema.tables.map(t => [t.name, 0]));
+  const legacySource = Object.fromEntries(base.sourceSchema.tables.map(t => [t.name, t.name === 'tenants' ? [{ id: 1 }] : t.name === 'settings' ? [{ id: 1, tenant_id: 1 }] : []]));
   const common = { ...base, sourceFkActions: actionRows,
+    legacyInventory: { source: legacySource, posts: [], mediaReferences: [], placeholderTenantId: 1 },
     sourceCounts: { environment: 'aiven_v2', schema: 'defaultdb', collectedAt: '2026-11-12', counts: sourceCounts },
     targetCounts: { environment: 'kroombox_development', schema: 'uniin_universe', collectedAt: '2026-11-12', counts: targetCounts },
     evidence: { results: allChecks.map(checkId => ({ checkId, sourceEnvironment: 'aiven_v2', targetEnvironment: 'kroombox_rehearsal', evidenceFile, evidenceSha256, collectedAt: '2026-11-12', status: 'passed', findings: [], administratorReviewStatus: 'approved' })) },
