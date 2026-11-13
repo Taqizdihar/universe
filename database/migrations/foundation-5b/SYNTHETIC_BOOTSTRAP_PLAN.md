@@ -1,0 +1,5 @@
+# Separate synthetic Super Admin bootstrap — not executable DML
+
+The schema package contains no rows. For a later identity-collision rehearsal, prepare a **separately approved** synthetic bootstrap DML file targeting only `uniin_universe_reh`. Use a fictional reserved email under `.invalid`, a fresh test-only password hash, one synthetic `users` row, and one `user_global_roles` row with `super_admin`. Choose a test target user ID that deliberately collides with a **synthetic** source ID, then verify unique email and role constraints. Do not copy the development Super Admin row, its real email/password hash, `super_admin_verifications`, `account_auth_state`, `password_reset_tokens`, or any API key.
+
+Before a future manual phpMyAdmin execution, independently review the exact schema name, test-only values, password-hash format, FK/unique constraints, row counts, and cleanup plan. The bootstrap must be in a separate file from schema DDL and must never run automatically. This phase intentionally provides no INSERT statement or usable login credential.

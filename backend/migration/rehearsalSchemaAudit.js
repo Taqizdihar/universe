@@ -1,0 +1,84 @@
+// Local analysis only. Never emit input SQL, inserted rows, or credentials.
+const fs = require('node:fs');
+const path = require('node:path');
+
+const foundation2 = path.resolve(__dirname, '../../database/migrations/foundation-2');
+const files = ['001_migration_batches.up.sql', '002_workspace_compatibility.up.sql', '003_migration_identity_map.up.sql', '004_migration_validation_results.up.sql', '005_migration_asset_map.up.sql'];
+
+function auditStructureExport(sql, reference) {
+    if (typeof sql !== 'string' || !Array.isArray(reference?.tables)) throw TypeError('SQL text and normalized target schema are required.');
+    const creates = [...sql.matchAll(/^CREATE TABLE `([^`]+)` \(([^]*?)^\)\s*(ENGINE=[^;]*)?;/gm)];
+    const names = creates.map(match => match[1]);
+    const expected = new Map(reference.tables.map(table => [table.name, table]));
+    const missingTableOptions = [], columnDifferences = [], definitionDifferences = [], unexpectedTables = [];
+    let columns = 0;
+    for (const match of creates) {
+        const [, name, body, options] = match;
+        const declarations = [...body.matchAll(/^  `([^`]+)`\s+([^\n]+)$/gm)];
+        const actualColumns = declarations.map(entry => entry[1]);
+        columns += actualColumns.length;
+        if (!options || !/ENGINE=InnoDB\b/.test(options) || !/DEFAULT CHARSET=utf8mb4\b/.test(options) || !/COLLATE=utf8mb4_unicode_ci\b/.test(options)) missingTableOptions.push(name);
+        const target = expected.get(name);
+        if (!target) unexpectedTables.push(name);
+        else {
+            if (JSON.stringify(actualColumns) !== JSON.stringify([...target.columns].sort((a, b) => a.ordinal - b.ordinal).map(column => column.name))) columnDifferences.push(name);
+            const expectedColumns = new Map(target.columns.map(column => [column.name, column]));
+            for (const [, columnName, rawDefinition] of declarations) {
+                const column = expectedColumns.get(columnName);
+                if (!column) continue;
+                const definition = rawDefinition.replace(/,$/, '');
+                const typeMatches = definition.toLowerCase().startsWith(column.type.toLowerCase());
+                const nullableMatches = column.nullable === !/\bNOT NULL\b/i.test(definition);
+                const collationMatches = column.collation == null || new RegExp(`\\bCOLLATE\\s+${column.collation}\\b`, 'i').test(definition);
+                const defaultMatch = definition.match(/\bDEFAULT\s+(?:'((?:''|[^'])*)'|([A-Za-z0-9_():.+-]+))/i);
+                const actualDefault = defaultMatch ? (defaultMatch[1] ?? defaultMatch[2]) : null;
+                const expectedDefault = column.default;
+                const defaultMatches = (actualDefault === null || actualDefault?.toUpperCase() === 'NULL') ? expectedDefault == null : String(actualDefault).toUpperCase() === String(expectedDefault).toUpperCase();
+                if (!typeMatches || !nullableMatches || !collationMatches || !defaultMatches) definitionDifferences.push(`${name}.${columnName}`);
+            }
+        }
+    }
+    const missingTables = reference.tables.filter(table => !names.includes(table.name)).map(table => table.name);
+    const intendedChecks = files.flatMap(file => [...fs.readFileSync(path.join(foundation2, file), 'utf8').matchAll(/CONSTRAINT (chk_[a-z_]+)/g)].map(match => match[1]));
+    const insertStatements = (sql.match(/^\s*INSERT\s+INTO\s+/gim) || []).length;
+    const otherUnsafeStatements = [...sql.matchAll(/^\s*(DROP|TRUNCATE|REPLACE|UPDATE|DELETE|LOAD|CALL)\b|^\s*(CREATE|ALTER)\s+DATABASE\b|^\s*USE\s+/gim)].map(match => match[1] || (match[2] ? `${match[2]} DATABASE` : 'USE'));
+    const checkDefinitions = (sql.match(/\bCHECK\s*\(/gi) || []).length;
+    const fkDefinitions = (sql.match(/ADD CONSTRAINT `[^`]+` FOREIGN KEY/g) || []).length;
+    const indexDefinitions = [], fkDifferences = [];
+    for (const alter of sql.matchAll(/^ALTER TABLE `([^`]+)`\s+([^]*?);/gm)) {
+        const [, tableName, body] = alter;
+        const table = expected.get(tableName);
+        if (!table) continue;
+        for (const key of body.matchAll(/ADD (PRIMARY KEY|UNIQUE KEY `([^`]+)`|KEY `([^`]+)`) \(([^)]+)\)/g)) {
+            const name = key[1] === 'PRIMARY KEY' ? 'PRIMARY' : key[2] || key[3];
+            const columns = [...key[4].matchAll(/`([^`]+)`/g)].map(entry => entry[1]);
+            indexDefinitions.push({ table: tableName, name, columns });
+        }
+        for (const fk of body.matchAll(/ADD CONSTRAINT `([^`]+)` FOREIGN KEY \(([^)]+)\) REFERENCES `([^`]+)` \(([^)]+)\)(?: ON DELETE (CASCADE|SET NULL|RESTRICT|NO ACTION))?(?: ON UPDATE (CASCADE|SET NULL|RESTRICT|NO ACTION))?/g)) {
+            const target = table.foreignKeys.find(item => item.name === fk[1]);
+            const columns = [...fk[2].matchAll(/`([^`]+)`/g)].map(entry => entry[1]);
+            const referencedColumns = [...fk[4].matchAll(/`([^`]+)`/g)].map(entry => entry[1]);
+            if (!target || JSON.stringify(target.columns) !== JSON.stringify(columns) || target.referencedTable !== fk[3] || JSON.stringify(target.referencedColumns) !== JSON.stringify(referencedColumns) || target.onDelete !== (fk[5] || 'NO ACTION') || target.onUpdate !== (fk[6] || 'NO ACTION')) fkDifferences.push(`${tableName}.${fk[1]}`);
+        }
+    }
+    const indexDifferences = [];
+    for (const table of reference.tables) for (const index of table.indexes) {
+        const found = indexDefinitions.find(item => item.table === table.name && item.name === index.name);
+        if (!found || JSON.stringify(found.columns) !== JSON.stringify(index.columns)) indexDifferences.push(`${table.name}.${index.name}`);
+    }
+    const blockers = [];
+    if (names.length !== 28 || new Set(names).size !== names.length || missingTables.length || unexpectedTables.length || columnDifferences.length || definitionDifferences.length || columns !== 212) blockers.push('table_or_column_inventory_mismatch');
+    if (missingTableOptions.length) blockers.push('table_options_missing');
+    if (checkDefinitions < intendedChecks.length) blockers.push('check_constraints_unverifiable');
+    if (fkDefinitions !== 30) blockers.push('foreign_key_inventory_mismatch');
+    if (fkDifferences.length) blockers.push('foreign_key_definition_mismatch');
+    if (indexDefinitions.reduce((n, entry) => n + entry.columns.length, 0) !== 87 || indexDifferences.length) blockers.push('index_definition_mismatch');
+    if (insertStatements) blockers.push('source_export_contains_dml');
+    if (otherUnsafeStatements.length) blockers.push('source_export_contains_unsafe_statements');
+    return { status: blockers.length ? 'blocked' : 'structurally_reviewable', tables: names.length, columns, foreignKeys: fkDefinitions,
+        checkDefinitions, intendedFoundation2Checks: intendedChecks.length, insertStatements, otherUnsafeStatements: [...new Set(otherUnsafeStatements)].sort(),
+        missingTableOptions: missingTableOptions.sort(), missingTables, unexpectedTables, columnDifferences,
+        definitionDifferences: definitionDifferences.sort(), indexDifferences: indexDifferences.sort(), fkDifferences: fkDifferences.sort(),
+        blockers: blockers.sort() };
+}
+module.exports = { auditStructureExport };
