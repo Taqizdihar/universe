@@ -38,6 +38,11 @@ test('synthetic complete structural source is reviewable; omissions and DML fail
   assert.ok(auditStructureExport(missingChecks, reference).blockers.includes('check_constraints_unverifiable'));
   const wrongColumn = complete.replace('`version` bigint unsigned', '`version` varchar(20)');
   assert.ok(auditStructureExport(wrongColumn, reference).blockers.includes('table_or_column_inventory_mismatch'));
+  const uniqueIndex = reference.tables.flatMap(table => table.indexes.map(index => ({ table: table.name, index }))).find(entry => entry.index.unique && !entry.index.primary);
+  const weakenedUnique = complete.replace(`ALTER TABLE \`${uniqueIndex.table}\` ADD UNIQUE KEY \`${uniqueIndex.index.name}\``, `ALTER TABLE \`${uniqueIndex.table}\` ADD KEY \`${uniqueIndex.index.name}\``);
+  assert.ok(auditStructureExport(weakenedUnique, reference).blockers.includes('index_definition_mismatch'));
+  const missingForeignKey = complete.replace(/^ALTER TABLE `[^`]+` ADD CONSTRAINT `[^`]+` FOREIGN KEY[^\n]+\n/m, '');
+  assert.ok(auditStructureExport(missingForeignKey, reference).blockers.includes('foreign_key_definition_mismatch'));
 });
 test('offline CLI never echoes authentication rows from an impure export', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rehearsal-audit-'));
@@ -63,11 +68,15 @@ test('preflight and verification are explicitly bound to approved rehearsal sche
   }
   assert.match(sql('01_rehearsal_preflight.sql'), /PASS_EMPTY_REHEARSAL_SCHEMA/);
   assert.match(sql('03_rehearsal_verify.sql'), /REFERENCED_TABLE_SCHEMA<>'uniin_universe_reh'/);
+  assert.match(sql('03_rehearsal_verify.sql'), /check_constraint_count/);
+  assert.match(sql('03_rehearsal_verify.sql'), /auto_increment_column_count/);
   assert.equal((sql('04_rehearsal_empty_data_check.sql').match(/COUNT\(\*\) AS exact_rows/g) || []).length, 28);
 });
 test('source constraints audit is read-only; schema import is intentionally blocked', () => {
   const audit = statements(sql('00_development_constraints_audit.sql'));
   assert.match(audit, /SHOW CREATE TABLE `uniin_universe`\.`migration_batches`/);
+  assert.match(audit, /tc\.CONSTRAINT_SCHEMA = 'uniin_universe' AND tc\.CONSTRAINT_TYPE = 'CHECK'/);
+  assert.doesNotMatch(audit, /tc\.TABLE_NAME IN/);
   assert.doesNotMatch(audit.replace(/SHOW CREATE TABLE/g, 'SHOW_TABLE'), /\b(?:CREATE|ALTER|DROP|TRUNCATE|INSERT|UPDATE|DELETE)\s+(?:TABLE|FROM|INTO|\w+\s+SET)\b/i);
   const blocked = statements(sql('02_rehearsal_schema.sql'));
   assert.match(blocked, /BLOCKED_UNVERIFIED_SCHEMA_EXPORT/);

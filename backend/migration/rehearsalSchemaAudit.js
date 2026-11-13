@@ -44,7 +44,7 @@ function auditStructureExport(sql, reference) {
     const otherUnsafeStatements = [...sql.matchAll(/^\s*(DROP|TRUNCATE|REPLACE|UPDATE|DELETE|LOAD|CALL)\b|^\s*(CREATE|ALTER)\s+DATABASE\b|^\s*USE\s+/gim)].map(match => match[1] || (match[2] ? `${match[2]} DATABASE` : 'USE'));
     const checkDefinitions = (sql.match(/\bCHECK\s*\(/gi) || []).length;
     const fkDefinitions = (sql.match(/ADD CONSTRAINT `[^`]+` FOREIGN KEY/g) || []).length;
-    const indexDefinitions = [], fkDifferences = [];
+    const indexDefinitions = [], foreignKeyDefinitions = [];
     for (const alter of sql.matchAll(/^ALTER TABLE `([^`]+)`\s+([^]*?);/gm)) {
         const [, tableName, body] = alter;
         const table = expected.get(tableName);
@@ -52,20 +52,26 @@ function auditStructureExport(sql, reference) {
         for (const key of body.matchAll(/ADD (PRIMARY KEY|UNIQUE KEY `([^`]+)`|KEY `([^`]+)`) \(([^)]+)\)/g)) {
             const name = key[1] === 'PRIMARY KEY' ? 'PRIMARY' : key[2] || key[3];
             const columns = [...key[4].matchAll(/`([^`]+)`/g)].map(entry => entry[1]);
-            indexDefinitions.push({ table: tableName, name, columns });
+            indexDefinitions.push({ table: tableName, name, columns, unique: key[1] === 'PRIMARY KEY' || key[1].startsWith('UNIQUE KEY'), primary: key[1] === 'PRIMARY KEY' });
         }
         for (const fk of body.matchAll(/ADD CONSTRAINT `([^`]+)` FOREIGN KEY \(([^)]+)\) REFERENCES `([^`]+)` \(([^)]+)\)(?: ON DELETE (CASCADE|SET NULL|RESTRICT|NO ACTION))?(?: ON UPDATE (CASCADE|SET NULL|RESTRICT|NO ACTION))?/g)) {
-            const target = table.foreignKeys.find(item => item.name === fk[1]);
             const columns = [...fk[2].matchAll(/`([^`]+)`/g)].map(entry => entry[1]);
             const referencedColumns = [...fk[4].matchAll(/`([^`]+)`/g)].map(entry => entry[1]);
-            if (!target || JSON.stringify(target.columns) !== JSON.stringify(columns) || target.referencedTable !== fk[3] || JSON.stringify(target.referencedColumns) !== JSON.stringify(referencedColumns) || target.onDelete !== (fk[5] || 'NO ACTION') || target.onUpdate !== (fk[6] || 'NO ACTION')) fkDifferences.push(`${tableName}.${fk[1]}`);
+            foreignKeyDefinitions.push({ table: tableName, name: fk[1], columns, referencedTable: fk[3], referencedColumns, onDelete: fk[5] || 'NO ACTION', onUpdate: fk[6] || 'NO ACTION' });
         }
     }
     const indexDifferences = [];
     for (const table of reference.tables) for (const index of table.indexes) {
         const found = indexDefinitions.find(item => item.table === table.name && item.name === index.name);
-        if (!found || JSON.stringify(found.columns) !== JSON.stringify(index.columns)) indexDifferences.push(`${table.name}.${index.name}`);
+        if (!found || JSON.stringify(found.columns) !== JSON.stringify(index.columns) || found.unique !== index.unique || found.primary !== index.primary) indexDifferences.push(`${table.name}.${index.name}`);
     }
+    for (const index of indexDefinitions) if (!expected.get(index.table)?.indexes.some(item => item.name === index.name)) indexDifferences.push(`${index.table}.${index.name}`);
+    const fkDifferences = [];
+    for (const table of reference.tables) for (const fk of table.foreignKeys) {
+        const found = foreignKeyDefinitions.find(item => item.table === table.name && item.name === fk.name);
+        if (!found || JSON.stringify(found.columns) !== JSON.stringify(fk.columns) || found.referencedTable !== fk.referencedTable || JSON.stringify(found.referencedColumns) !== JSON.stringify(fk.referencedColumns) || found.onDelete !== fk.onDelete || found.onUpdate !== fk.onUpdate) fkDifferences.push(`${table.name}.${fk.name}`);
+    }
+    for (const fk of foreignKeyDefinitions) if (!expected.get(fk.table)?.foreignKeys.some(item => item.name === fk.name)) fkDifferences.push(`${fk.table}.${fk.name}`);
     const blockers = [];
     if (names.length !== 28 || new Set(names).size !== names.length || missingTables.length || unexpectedTables.length || columnDifferences.length || definitionDifferences.length || columns !== 212) blockers.push('table_or_column_inventory_mismatch');
     if (missingTableOptions.length) blockers.push('table_options_missing');

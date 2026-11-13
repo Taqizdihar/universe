@@ -10,7 +10,6 @@ FROM information_schema.TABLE_CONSTRAINTS tc
 JOIN information_schema.CHECK_CONSTRAINTS cc
   ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
 WHERE tc.CONSTRAINT_SCHEMA = 'uniin_universe' AND tc.CONSTRAINT_TYPE = 'CHECK'
-  AND tc.TABLE_NAME IN ('migration_asset_map','migration_batches','migration_identity_map','migration_validation_results','workspace_compatibility')
 ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME;
 SHOW CREATE TABLE `uniin_universe`.`migration_asset_map`;
 SHOW CREATE TABLE `uniin_universe`.`migration_batches`;
