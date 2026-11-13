@@ -1,5 +1,7 @@
 -- READ ONLY. Alternative to truncated phpMyAdmin SHOW CREATE TABLE output.
--- Run on Kroombox and export EACH result set as CSV. This selects schema metadata only.
+-- Run on Kroombox. Use each result grid's Copy to clipboard button and paste
+-- the three grids into separate text files; an Export button is not required.
+-- This selects schema metadata only.
 -- The five tables use the explicit development schema; no rehearsal or tenant rows are read.
 SELECT TABLE_NAME, ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE,
        COLUMN_DEFAULT, EXTRA, CHARACTER_SET_NAME, COLLATION_NAME, GENERATION_EXPRESSION
