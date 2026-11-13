@@ -1,0 +1,6 @@
+TABLE_NAME   	CONSTRAINT_NAME	ORDINAL_POSITION	COLUMN_NAME	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME	DELETE_RULE	UPDATE_RULE
+migration_asset_map	fk_asset_map_batch	1	batch_id	uniin_universe	migration_batches	batch_id	RESTRICT	NO ACTION
+migration_identity_map	fk_identity_map_batch	1	batch_id	uniin_universe	migration_batches	batch_id	RESTRICT	NO ACTION
+migration_validation_results	fk_validation_batch	1	batch_id	uniin_universe	migration_batches	batch_id	RESTRICT	NO ACTION
+workspace_compatibility	fk_workspace_compatibility_batch	1	migration_batch_id	uniin_universe	migration_batches	batch_id	RESTRICT	NO ACTION
+workspace_compatibility	fk_workspace_compatibility_tenant	1	tenant_id	uniin_universe	tenants	id	CASCADE	NO ACTION
