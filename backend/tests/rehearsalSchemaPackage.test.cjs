@@ -4,11 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
-const { auditStructureExport } = require('../migration/rehearsalSchemaAudit');
+const { auditStructureExport, auditLiveChecksCsv } = require('../migration/rehearsalSchemaAudit');
 
 const root = path.resolve(__dirname, '../../database/migrations/foundation-5b');
 const reference = require('../../database/schema-evidence/foundation-4/kroombox-target-schema.json');
 const sql = name => fs.readFileSync(path.join(root, name), 'utf8');
+const liveChecksCsv = fs.readFileSync(path.resolve(__dirname, '../../database/schema-evidence/foundation-5b/kroombox-live-checks-2026-11-13.csv'), 'utf8');
 const statements = source => source.split('\n').filter(line => !line.trimStart().startsWith('--')).join('\n');
 function syntheticExport() {
   const creates = reference.tables.map((table, tableIndex) => {
@@ -58,6 +59,16 @@ test('offline CLI never echoes authentication rows from an impure export', () =>
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+test('administrator CHECK inventory matches all 24 historical definitions, and a changed clause blocks review', () => {
+  const result = auditLiveChecksCsv(liveChecksCsv);
+  assert.equal(result.status, 'verified_against_foundation_2');
+  assert.equal(result.observedChecks, 24);
+  assert.deepEqual(result.blockers, []);
+  const altered = liveChecksCsv.replace('needs_review', 'different_status');
+  assert.ok(auditLiveChecksCsv(altered).blockers.includes('check_definition_mismatch'));
+  const missing = liveChecksCsv.split(/\r?\n/).slice(0, -2).join('\n');
+  assert.ok(auditLiveChecksCsv(missing).blockers.includes('check_inventory_mismatch'));
+});
 test('preflight and verification are explicitly bound to approved rehearsal schema', () => {
   const files = ['01_rehearsal_preflight.sql', '03_rehearsal_verify.sql', '04_rehearsal_empty_data_check.sql'];
   for (const file of files) {
@@ -78,6 +89,12 @@ test('source constraints audit is read-only; schema import is intentionally bloc
   assert.match(audit, /tc\.CONSTRAINT_SCHEMA = 'uniin_universe' AND tc\.CONSTRAINT_TYPE = 'CHECK'/);
   assert.doesNotMatch(audit, /tc\.TABLE_NAME IN/);
   assert.doesNotMatch(audit.replace(/SHOW CREATE TABLE/g, 'SHOW_TABLE'), /\b(?:CREATE|ALTER|DROP|TRUNCATE|INSERT|UPDATE|DELETE)\s+(?:TABLE|FROM|INTO|\w+\s+SET)\b/i);
+  const metadata = statements(sql('00b_development_structure_metadata.sql'));
+  assert.match(metadata, /information_schema\.COLUMNS/);
+  assert.match(metadata, /information_schema\.STATISTICS/);
+  assert.match(metadata, /information_schema\.REFERENTIAL_CONSTRAINTS/);
+  assert.equal((metadata.match(/TABLE_SCHEMA='uniin_universe'/g) || []).length, 3);
+  assert.doesNotMatch(metadata, /\b(?:CREATE|ALTER|DROP|TRUNCATE|INSERT|UPDATE|DELETE)\s+(?:TABLE|FROM|INTO|\w+\s+SET)\b/i);
   const blocked = statements(sql('02_rehearsal_schema.sql'));
   assert.match(blocked, /BLOCKED_UNVERIFIED_SCHEMA_EXPORT/);
   assert.doesNotMatch(blocked, /\b(?:CREATE|ALTER|DROP|TRUNCATE|INSERT|UPDATE|DELETE)\s+(?:TABLE|FROM|INTO|\w+\s+SET)\b/i);

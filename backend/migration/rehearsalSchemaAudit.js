@@ -5,6 +5,74 @@ const path = require('node:path');
 const foundation2 = path.resolve(__dirname, '../../database/migrations/foundation-2');
 const files = ['001_migration_batches.up.sql', '002_workspace_compatibility.up.sql', '003_migration_identity_map.up.sql', '004_migration_validation_results.up.sql', '005_migration_asset_map.up.sql'];
 
+function foundation2Checks() {
+    const checks = new Map();
+    for (const file of files) {
+        const table = file.replace(/^\d+_/, '').replace(/\.up\.sql$/, '');
+        const source = fs.readFileSync(path.join(foundation2, file), 'utf8');
+        for (const match of source.matchAll(/CONSTRAINT\s+(chk_[a-z_]+)\s+CHECK\s*\(/gi)) {
+            let cursor = match.index + match[0].length, depth = 1, quoted = false;
+            const start = cursor;
+            while (cursor < source.length && depth) {
+                if (source[cursor] === "'") quoted = !quoted;
+                else if (!quoted && source[cursor] === '(') depth++;
+                else if (!quoted && source[cursor] === ')') depth--;
+                cursor++;
+            }
+            if (depth) throw Error(`Unclosed historical CHECK: ${match[1]}`);
+            checks.set(match[1], { table, expression: source.slice(start, cursor - 1) });
+        }
+    }
+    return checks;
+}
+
+function parseCsvRow(line) {
+    const cells = [];
+    let value = '', quoted = false;
+    for (let i = 0; i < line.length; i++) {
+        const character = line[i];
+        if (character === '"') {
+            if (quoted && line[i + 1] === '"') { value += '"'; i++; }
+            else quoted = !quoted;
+        } else if (character === ',' && !quoted) { cells.push(value); value = ''; }
+        else value += character;
+    }
+    if (quoted) throw Error('Incomplete CHECK CSV row');
+    cells.push(value);
+    return cells;
+}
+
+function normalizeCheck(expression) {
+    return expression.replace(/\\'/g, "'").replace(/_utf8mb4/gi, '')
+        .replace(/([a-z_][a-z0-9_]*)\s+REGEXP\s+('[^']*')/gi, 'regexp_like($1,$2)')
+        .replace(/[\s()`]/g, '').toLowerCase();
+}
+
+function auditLiveChecksCsv(csv) {
+    const rows = csv.trim().split(/\r?\n/).map(parseCsvRow);
+    if (JSON.stringify(rows.shift()) !== JSON.stringify(['TABLE_NAME', 'CONSTRAINT_NAME', 'CHECK_CLAUSE'])) throw Error('Expected TABLE_NAME,CONSTRAINT_NAME,CHECK_CLAUSE CSV');
+    const expected = foundation2Checks();
+    const actual = new Map(), duplicateNames = [], unexpectedNames = [], tableDifferences = [], expressionDifferences = [];
+    for (const row of rows) {
+        if (row.length !== 3) throw Error('Invalid CHECK CSV column count');
+        const [table, name, clause] = row;
+        if (actual.has(name)) duplicateNames.push(name);
+        actual.set(name, { table, clause });
+        const historical = expected.get(name);
+        if (!historical) unexpectedNames.push(name);
+        else {
+            if (historical.table !== table) tableDifferences.push(name);
+            if (normalizeCheck(historical.expression) !== normalizeCheck(clause)) expressionDifferences.push(name);
+        }
+    }
+    const missingNames = [...expected.keys()].filter(name => !actual.has(name));
+    const blockers = [];
+    if (rows.length !== expected.size || missingNames.length || unexpectedNames.length || duplicateNames.length) blockers.push('check_inventory_mismatch');
+    if (tableDifferences.length || expressionDifferences.length) blockers.push('check_definition_mismatch');
+    return { status: blockers.length ? 'blocked' : 'verified_against_foundation_2', observedChecks: rows.length, historicalChecks: expected.size,
+        missingNames, unexpectedNames, duplicateNames, tableDifferences, expressionDifferences, blockers };
+}
+
 function auditStructureExport(sql, reference) {
     if (typeof sql !== 'string' || !Array.isArray(reference?.tables)) throw TypeError('SQL text and normalized target schema are required.');
     const creates = [...sql.matchAll(/^CREATE TABLE `([^`]+)` \(([^]*?)^\)\s*(ENGINE=[^;]*)?;/gm)];
@@ -39,7 +107,7 @@ function auditStructureExport(sql, reference) {
         }
     }
     const missingTables = reference.tables.filter(table => !names.includes(table.name)).map(table => table.name);
-    const intendedChecks = files.flatMap(file => [...fs.readFileSync(path.join(foundation2, file), 'utf8').matchAll(/CONSTRAINT (chk_[a-z_]+)/g)].map(match => match[1]));
+    const intendedChecks = foundation2Checks();
     const insertStatements = (sql.match(/^\s*INSERT\s+INTO\s+/gim) || []).length;
     const otherUnsafeStatements = [...sql.matchAll(/^\s*(DROP|TRUNCATE|REPLACE|UPDATE|DELETE|LOAD|CALL)\b|^\s*(CREATE|ALTER)\s+DATABASE\b|^\s*USE\s+/gim)].map(match => match[1] || (match[2] ? `${match[2]} DATABASE` : 'USE'));
     const checkDefinitions = (sql.match(/\bCHECK\s*\(/gi) || []).length;
@@ -75,16 +143,16 @@ function auditStructureExport(sql, reference) {
     const blockers = [];
     if (names.length !== 28 || new Set(names).size !== names.length || missingTables.length || unexpectedTables.length || columnDifferences.length || definitionDifferences.length || columns !== 212) blockers.push('table_or_column_inventory_mismatch');
     if (missingTableOptions.length) blockers.push('table_options_missing');
-    if (checkDefinitions < intendedChecks.length) blockers.push('check_constraints_unverifiable');
+    if (checkDefinitions < intendedChecks.size) blockers.push('check_constraints_unverifiable');
     if (fkDefinitions !== 30) blockers.push('foreign_key_inventory_mismatch');
     if (fkDifferences.length) blockers.push('foreign_key_definition_mismatch');
     if (indexDefinitions.reduce((n, entry) => n + entry.columns.length, 0) !== 87 || indexDifferences.length) blockers.push('index_definition_mismatch');
     if (insertStatements) blockers.push('source_export_contains_dml');
     if (otherUnsafeStatements.length) blockers.push('source_export_contains_unsafe_statements');
     return { status: blockers.length ? 'blocked' : 'structurally_reviewable', tables: names.length, columns, foreignKeys: fkDefinitions,
-        checkDefinitions, intendedFoundation2Checks: intendedChecks.length, insertStatements, otherUnsafeStatements: [...new Set(otherUnsafeStatements)].sort(),
+        checkDefinitions, intendedFoundation2Checks: intendedChecks.size, insertStatements, otherUnsafeStatements: [...new Set(otherUnsafeStatements)].sort(),
         missingTableOptions: missingTableOptions.sort(), missingTables, unexpectedTables, columnDifferences,
         definitionDifferences: definitionDifferences.sort(), indexDifferences: indexDifferences.sort(), fkDifferences: fkDifferences.sort(),
         blockers: blockers.sort() };
 }
-module.exports = { auditStructureExport };
+module.exports = { auditStructureExport, auditLiveChecksCsv };
